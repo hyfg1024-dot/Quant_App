@@ -1,2 +1,5 @@
 .DS_Store
 venv/
+data/*.db
+__pycache__/
+*.pyc
