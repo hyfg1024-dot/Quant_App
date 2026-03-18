@@ -12,7 +12,6 @@ from slow_engine import (
     add_stock_by_query,
     get_latest_fundamental_snapshot,
     get_stock_pool,
-    get_stock_pool_with_bucket,
     init_db,
     remove_stock_from_pool,
     update_fundamental_data,
@@ -232,30 +231,17 @@ st.sidebar.subheader("股票池管理")
 new_query = st.sidebar.text_input(
     "新增股票（代码或名称）", value="", placeholder="例如 600036 / 00700 / 腾讯控股"
 )
-add_cols = st.sidebar.columns(2)
-if add_cols[0].button("加入持仓"):
+if st.sidebar.button("添加到股票池并抓取数据"):
     try:
-        code, name = add_stock_by_query(new_query, bucket="holding")
+        code, name = add_stock_by_query(new_query)
         update_fundamental_data([(code, name)])
-        st.sidebar.success(f"已加入持仓: {code} - {name}")
-        st.rerun()
-    except Exception as exc:
-        st.sidebar.error(f"添加失败: {exc}")
-if add_cols[1].button("加入观察"):
-    try:
-        code, name = add_stock_by_query(new_query, bucket="watch")
-        update_fundamental_data([(code, name)])
-        st.sidebar.success(f"已加入观察: {code} - {name}")
+        st.sidebar.success(f"已加入: {code} - {name}")
         st.rerun()
     except Exception as exc:
         st.sidebar.error(f"添加失败: {exc}")
 
 pool_rows = get_stock_pool()
 st.sidebar.caption("当前股票池: " + "、".join([f"{c}-{n}" for c, n in pool_rows]))
-pool_bucket_rows = get_stock_pool_with_bucket()
-holding_count = len([1 for _, _, b in pool_bucket_rows if b == "holding"])
-watch_count = len([1 for _, _, b in pool_bucket_rows if b != "holding"])
-st.sidebar.caption(f"持仓: {holding_count}  |  观察: {watch_count}")
 
 if st.button("刷新慢引擎数据"):
     with st.spinner("正在更新慢引擎数据..."):
@@ -348,35 +334,16 @@ styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
 )
 st.dataframe(styled, width="stretch", hide_index=True)
 
-pool_with_bucket = get_stock_pool_with_bucket()
-holding_items = [{"code": c, "name": n} for c, n, b in pool_with_bucket if b == "holding"]
-watch_items = [{"code": c, "name": n} for c, n, b in pool_with_bucket if b != "holding"]
-all_items = holding_items + watch_items
-
-if not all_items:
-    st.warning("股票池为空，请先在侧边栏加入持仓或观察标的。")
-    st.stop()
-
 if "fast_selected_code" not in st.session_state:
-    st.session_state["fast_selected_code"] = all_items[0]["code"]
-    st.session_state["fast_selected_name"] = all_items[0]["name"]
+    st.session_state["fast_selected_code"] = rows[0]["code"]
+    st.session_state["fast_selected_name"] = rows[0]["name"]
 
 selected_code_for_ctrl = st.session_state["fast_selected_code"]
-if selected_code_for_ctrl not in {i["code"] for i in all_items}:
-    st.session_state["fast_selected_code"] = all_items[0]["code"]
-    st.session_state["fast_selected_name"] = all_items[0]["name"]
-    selected_code_for_ctrl = all_items[0]["code"]
-else:
-    name_map = {i["code"]: i["name"] for i in all_items}
-    st.session_state["fast_selected_name"] = name_map.get(
-        selected_code_for_ctrl, st.session_state.get("fast_selected_name", "")
-    )
-
 market_open_for_ctrl = _is_market_open(selected_code_for_ctrl)
 
 st.markdown('<div class="engine-divider"><span>快引擎子版面</span></div>', unsafe_allow_html=True)
 header_cols = st.columns([2.4, 0.8, 0.6, 0.9], vertical_alignment="bottom")
-header_cols[0].markdown("#### 标的分组")
+header_cols[0].markdown("#### 观察标的")
 auto_refresh_on = header_cols[1].checkbox("自动刷新", value=False, key="fast_auto_refresh_on")
 auto_refresh_sec = header_cols[2].selectbox(
     "刷新间隔(秒)",
@@ -394,47 +361,25 @@ if auto_refresh_on:
 else:
     st.caption("自动刷新已关闭")
 
-def _render_pool_section(title: str, items: list, key_prefix: str):
-    st.markdown(f"#### {title} ({len(items)})")
-    if not items:
-        st.caption("暂无标的")
-        return
-
-    row_cols = st.columns(min(3, max(1, len(items))))
-    for idx, item in enumerate(items):
-        col = row_cols[idx % len(row_cols)]
-        open_col, del_col = col.columns([8, 1], vertical_alignment="center")
-        if open_col.button(
-            f"{item['name']} ({item['code']})",
-            key=f"open_{key_prefix}_{item['code']}",
-            use_container_width=True,
-        ):
-            st.session_state["fast_selected_code"] = item["code"]
-            st.session_state["fast_selected_name"] = item["name"]
-        with del_col:
-            st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
-            if st.button(
-                "🗑",
-                key=f"mini_del_{key_prefix}_{item['code']}",
-                use_container_width=True,
-                help=f"删除 {item['name']}",
-            ):
-                remove_stock_from_pool(item["code"])
-                if st.session_state.get("fast_selected_code") == item["code"]:
-                    st.session_state.pop("fast_selected_code", None)
-                    st.session_state.pop("fast_selected_name", None)
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-
-
-group_cols = st.columns(2)
-with group_cols[0]:
-    _render_pool_section("我的持仓", holding_items, "holding")
-with group_cols[1]:
-    _render_pool_section("正在观察", watch_items, "watch")
+btn_rows = st.columns(min(3, max(1, len(rows))))
+for idx, row in enumerate(rows):
+    col = btn_rows[idx % len(btn_rows)]
+    open_col, del_col = col.columns([8, 1], vertical_alignment="center")
+    if open_col.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
+        st.session_state["fast_selected_code"] = row["code"]
+        st.session_state["fast_selected_name"] = row["name"]
+    with del_col:
+        st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
+        if st.button("🗑", key=f"mini_del_{row['code']}", use_container_width=True, help=f"删除 {row['name']}"):
+            remove_stock_from_pool(row["code"])
+            if st.session_state.get("fast_selected_code") == row["code"]:
+                st.session_state.pop("fast_selected_code", None)
+                st.session_state.pop("fast_selected_name", None)
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 with st.expander("管理观察池（删除）", expanded=False):
-    del_options = [f"{i['name']} ({i['code']})" for i in all_items]
+    del_options = [f"{r['name']} ({r['code']})" for r in rows]
     target_del = st.selectbox("选择要删除的股票", options=del_options, label_visibility="collapsed")
     if st.button("删除选中股票", key="delete_selected_stock"):
         del_code = target_del.split("(")[-1].rstrip(")")
