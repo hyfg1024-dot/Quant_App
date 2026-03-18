@@ -195,53 +195,43 @@ st.markdown(
         border-top: 1px solid #d7e0ec;
         margin: 0.5rem 0;
     }
-    .mini-del-wrap div.stButton > button {
-        min-height: 1.9rem !important;
-        padding: 0 !important;
-        font-size: 1.35rem !important;
-        background: transparent !important;
-        background-color: transparent !important;
-        background-image: none !important;
-        color: #60748f !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-    .mini-del-wrap div.stButton > button:hover,
-    .mini-del-wrap div.stButton > button:focus,
-    .mini-del-wrap div.stButton > button:active {
-        background: transparent !important;
-        background-color: transparent !important;
-        background-image: none !important;
-        color: #1f334f !important;
-        border: none !important;
-        box-shadow: none !important;
+    .stock-item-frame {
+        border: 1px solid #9bb9e3;
+        border-radius: 14px;
+        padding: 0.24rem 0.3rem;
+        margin-bottom: 0.18rem;
+        background: rgba(219, 234, 254, 0.18);
     }
     .stock-open-wrap div.stButton > button {
         min-height: 72px !important;
-        border-radius: 14px !important;
+        border-radius: 10px !important;
         white-space: pre-line !important;
-        line-height: 1.22 !important;
-        font-size: 0.92rem !important;
+        line-height: 1.12 !important;
+        font-size: 1.06rem !important;
+        font-weight: 800 !important;
         padding: 0.22rem 0.3rem !important;
     }
-    .stock-open-wrap div.stButton > button p:first-child {
-        font-size: 1.8rem !important;
-        font-weight: 800 !important;
+    .stock-open-wrap div.stButton > button * {
+        white-space: pre-line !important;
+    }
+    .stock-open-wrap div.stButton > button p {
+        margin: 0 !important;
+        text-align: center !important;
     }
     .stock-open-wrap div.stButton > button p:last-child {
-        font-size: 1.05rem !important;
-        font-weight: 700 !important;
-        margin-top: 0.1rem !important;
+        font-size: 0.95rem !important;
+        letter-spacing: 0.5px !important;
+        font-variant-numeric: tabular-nums !important;
     }
     .stock-del-inline-wrap div.stButton > button {
         min-height: 72px !important;
-        border-radius: 12px !important;
-        border: 1px solid #9bb9e3 !important;
+        border-radius: 10px !important;
+        border: none !important;
         background: transparent !important;
         background-color: transparent !important;
         background-image: none !important;
         color: #5d708a !important;
-        font-size: 1.1rem !important;
+        font-size: 1.05rem !important;
         padding: 0 !important;
         box-shadow: none !important;
     }
@@ -252,7 +242,7 @@ st.markdown(
         background-color: transparent !important;
         background-image: none !important;
         color: #1f334f !important;
-        border: 1px solid #7ea7df !important;
+        border: none !important;
         box-shadow: none !important;
     }
     </style>
@@ -425,7 +415,8 @@ for start in range(0, len(rows), grid_cols):
     for idx, row in enumerate(chunk):
         col = row_cols[idx]
         with col:
-            open_col, del_col = st.columns([5.4, 1], vertical_alignment="center")
+            st.markdown('<div class="stock-item-frame">', unsafe_allow_html=True)
+            open_col, del_col = st.columns([5.2, 1], vertical_alignment="center")
             with open_col:
                 st.markdown('<div class="stock-open-wrap">', unsafe_allow_html=True)
                 if st.button(
@@ -442,6 +433,7 @@ for start in range(0, len(rows), grid_cols):
                     "🗑️",
                     key=f"mini_del_{row['code']}",
                     use_container_width=True,
+                    type="tertiary",
                     help=f"删除 {row['name']}",
                 ):
                     remove_stock_from_pool(row["code"])
@@ -450,6 +442,7 @@ for start in range(0, len(rows), grid_cols):
                         st.session_state.pop("fast_selected_name", None)
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 with st.expander("管理观察池（删除）", expanded=False):
     del_options = [f"{r['name']} ({r['code']})" for r in rows]
