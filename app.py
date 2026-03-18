@@ -278,7 +278,8 @@ current_drawdown_pct = g6.number_input("当前组合回撤(%)", min_value=0.0, m
 per_share_risk = abs(entry_price - stop_price)
 risk_budget = account_capital * single_trade_risk_pct / 100
 max_shares = int(risk_budget / per_share_risk) if per_share_risk > 0 else 0
-planned_shares = st.number_input("计划买入股数", min_value=0, value=max_shares if max_shares > 0 else 0, step=100)
+default_shares = (max_shares // 100) * 100 if max_shares >= 100 else 0
+planned_shares = st.number_input("计划买入股数(100股整数倍)", min_value=0, value=default_shares, step=100)
 planned_loss = planned_shares * per_share_risk
 
 st.caption(
@@ -298,6 +299,7 @@ gate_checks = [
     ("实时行情可用", not bool(quote.get("error"))),
     ("执行门槛(无明显情绪溢价)", quote.get("premium_pct") is None or quote.get("premium_pct", 0) <= premium_warn_threshold),
     ("风险预算门槛", per_share_risk > 0 and planned_loss <= risk_budget),
+    ("交易股数门槛(100股整数倍)", planned_shares > 0 and planned_shares % 100 == 0),
     ("回撤门槛", current_drawdown_pct <= max_drawdown_limit_pct),
     ("交易前检查清单", all(checked)),
 ]
