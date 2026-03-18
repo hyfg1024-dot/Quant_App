@@ -233,6 +233,7 @@ if snapshot_df["股息率"].isna().all():
 options = [f"{r['code']} - {r['name']}" for r in rows]
 selected = st.selectbox("选择标的查看快引擎", options=options)
 selected_code = selected.split(" - ")[0]
+selected_fund = next((r for r in rows if r["code"] == selected_code), None)
 
 st.subheader("实时执行面板（快引擎）")
 quote = fetch_realtime_quote(selected_code)
@@ -263,7 +264,49 @@ check_items = [
 ]
 checked = [st.checkbox(item, key=f"ck_{idx}") for idx, item in enumerate(check_items)]
 
-if all(checked):
+st.subheader("决策硬门槛")
+g1, g2, g3 = st.columns(3)
+account_capital = g1.number_input("账户总资金(元)", min_value=0.0, value=500000.0, step=10000.0)
+single_trade_risk_pct = g2.number_input("单笔最大风险(%)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+max_drawdown_limit_pct = g3.number_input("允许最大回撤(%)", min_value=1.0, max_value=50.0, value=12.0, step=1.0)
+
+g4, g5, g6 = st.columns(3)
+entry_price = g4.number_input("计划买入价", min_value=0.0, value=float(quote["current_price"] or 0.0), step=0.01)
+stop_price = g5.number_input("止损价", min_value=0.0, value=max(float(quote["current_price"] or 0.0) * 0.95, 0.0), step=0.01)
+current_drawdown_pct = g6.number_input("当前组合回撤(%)", min_value=0.0, max_value=100.0, value=0.0, step=0.5)
+
+per_share_risk = abs(entry_price - stop_price)
+risk_budget = account_capital * single_trade_risk_pct / 100
+max_shares = int(risk_budget / per_share_risk) if per_share_risk > 0 else 0
+planned_shares = st.number_input("计划买入股数", min_value=0, value=max_shares if max_shares > 0 else 0, step=100)
+planned_loss = planned_shares * per_share_risk
+
+st.caption(
+    f"风控测算: 单股风险={per_share_risk:.3f} 元 | "
+    f"单笔风险预算={risk_budget:.2f} 元 | "
+    f"建议上限股数={max_shares} | "
+    f"计划亏损={planned_loss:.2f} 元"
+)
+
+fund_pb = selected_fund.get("pb") if selected_fund else None
+fund_dy = selected_fund.get("dividend_yield") if selected_fund else None
+fund_pe = selected_fund.get("pe") if selected_fund else None
+
+gate_checks = [
+    ("基本面门槛", fund_pb is not None and fund_dy is not None and fund_dy > dividend_threshold and fund_pb < pb_threshold),
+    ("估值口径可用(PE(TTM)非空)", fund_pe is not None),
+    ("实时行情可用", not bool(quote.get("error"))),
+    ("执行门槛(无明显情绪溢价)", quote.get("premium_pct") is None or quote.get("premium_pct", 0) <= premium_warn_threshold),
+    ("风险预算门槛", per_share_risk > 0 and planned_loss <= risk_budget),
+    ("回撤门槛", current_drawdown_pct <= max_drawdown_limit_pct),
+    ("交易前检查清单", all(checked)),
+]
+
+for name, passed in gate_checks:
+    st.write(f"{'通过' if passed else '未通过'} | {name}")
+
+final_ok = all(passed for _, passed in gate_checks)
+if final_ok:
     st.success("符合逻辑，允许执行")
 else:
-    st.info("请完成全部检查项后再执行交易")
+    st.error("未通过硬门槛，暂不允许执行")
