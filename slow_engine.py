@@ -72,6 +72,35 @@ def upsert_stock_pool(stock_pool: List[Tuple[str, str]] = STOCK_POOL) -> None:
         conn.commit()
 
 
+def get_stock_pool() -> List[Tuple[str, str]]:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute("SELECT code, name FROM stock_info ORDER BY code")
+        rows = cur.fetchall()
+        if rows:
+            return [(str(row[0]), str(row[1])) for row in rows]
+
+    upsert_stock_pool(STOCK_POOL)
+    return STOCK_POOL.copy()
+
+
+def add_stock_to_pool(code: str, name: str) -> None:
+    normalized_code = str(code).strip()
+    normalized_name = str(name).strip()
+    if not normalized_code.isdigit() or len(normalized_code) != 6:
+        raise ValueError("股票代码必须是 6 位数字")
+    if not normalized_name:
+        raise ValueError("股票名称不能为空")
+
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO stock_info(code, name) VALUES (?, ?)",
+            (normalized_code, normalized_name),
+        )
+        conn.commit()
+
+
 def _fetch_pb_from_baidu(symbol: str) -> Optional[float]:
     try:
         df = ak.stock_zh_valuation_baidu(
@@ -187,9 +216,12 @@ def save_fundamental(record: Dict) -> None:
         conn.commit()
 
 
-def update_fundamental_data(stock_pool: List[Tuple[str, str]] = STOCK_POOL) -> List[Dict]:
+def update_fundamental_data(stock_pool: Optional[List[Tuple[str, str]]] = None) -> List[Dict]:
     init_db()
-    upsert_stock_pool(stock_pool)
+    if stock_pool is None:
+        stock_pool = get_stock_pool()
+    else:
+        upsert_stock_pool(stock_pool)
 
     rows: List[Dict] = []
     for code, name in stock_pool:

@@ -2,7 +2,13 @@ import pandas as pd
 import streamlit as st
 
 from fast_engine import fetch_realtime_quote
-from slow_engine import get_latest_fundamental_snapshot, init_db, update_fundamental_data
+from slow_engine import (
+    add_stock_to_pool,
+    get_latest_fundamental_snapshot,
+    get_stock_pool,
+    init_db,
+    update_fundamental_data,
+)
 
 st.set_page_config(page_title="Defensive Quant Dashboard", page_icon="📊", layout="wide")
 
@@ -70,8 +76,55 @@ st.markdown(
         color: #0b2346;
         border-color: #8fb3e3;
     }
-    [data-testid="stSelectbox"] * {
+    [data-testid="stSelectbox"] label,
+    [data-testid="stSelectbox"] > div {
         color: var(--text-strong) !important;
+    }
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        background: #f7fbff !important;
+        border: 1px solid #b8cdea !important;
+        color: #0f2a52 !important;
+    }
+    [data-testid="stSelectbox"] div[data-baseweb="select"] span,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] input {
+        color: #0f2a52 !important;
+        -webkit-text-fill-color: #0f2a52 !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSelectbox"] div[data-baseweb="select"] svg {
+        fill: #345b91 !important;
+        color: #345b91 !important;
+    }
+    /* BaseWeb Select dropdown portal overrides: enforce high contrast */
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] * {
+        color: #f8fbff !important;
+        -webkit-text-fill-color: #f8fbff !important;
+    }
+    div[data-baseweb="popover"] div[role="listbox"],
+    div[data-baseweb="popover"] ul,
+    div[data-baseweb="menu"] {
+        background: #162235 !important;
+        border: 1px solid #304a71 !important;
+    }
+    div[data-baseweb="popover"] div[role="option"],
+    div[data-baseweb="menu"] li,
+    div[role="listbox"] div[role="option"] {
+        color: #f8fbff !important;
+        background: #162235 !important;
+        -webkit-text-fill-color: #f8fbff !important;
+    }
+    div[data-baseweb="popover"] div[role="option"]:hover,
+    div[data-baseweb="menu"] li:hover,
+    div[role="listbox"] div[role="option"]:hover {
+        background: #24406b !important;
+        color: #ffffff !important;
+    }
+    div[data-baseweb="popover"] div[role="option"][aria-selected="true"],
+    div[data-baseweb="menu"] li[aria-selected="true"],
+    div[role="listbox"] div[role="option"][aria-selected="true"] {
+        background: #2c4f83 !important;
+        color: #ffffff !important;
     }
     [data-testid="stCheckbox"] label span {
         color: var(--text-normal) !important;
@@ -121,6 +174,24 @@ premium_warn_threshold = st.sidebar.number_input(
     value=2.0,
     step=0.5,
 )
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("股票池管理")
+new_code = st.sidebar.text_input("新增股票代码", value="", placeholder="例如 600036")
+new_name = st.sidebar.text_input("新增股票名称", value="", placeholder="例如 招商银行")
+
+if st.sidebar.button("添加到股票池并抓取数据"):
+    try:
+        add_stock_to_pool(new_code, new_name)
+        update_fundamental_data([(new_code.strip(), new_name.strip())])
+        st.sidebar.success(f"已加入: {new_code.strip()} - {new_name.strip()}")
+        st.rerun()
+    except Exception as exc:
+        st.sidebar.error(f"添加失败: {exc}")
+
+pool_rows = get_stock_pool()
+pool_text = "、".join([f"{code}-{name}" for code, name in pool_rows])
+st.sidebar.caption(f"当前股票池: {pool_text}")
 
 if st.button("刷新慢引擎数据"):
     with st.spinner("正在更新 AkShare 低频数据..."):
