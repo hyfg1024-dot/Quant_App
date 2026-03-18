@@ -33,6 +33,27 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _normalize_symbol_input(text: str) -> str:
+    raw = str(text).strip().lower()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+
+    if raw.startswith("hk"):
+        if not digits:
+            return ""
+        return digits[-5:].zfill(5)
+
+    if len(digits) == 5:
+        return digits
+    if len(digits) >= 6:
+        return digits[-6:]
+    return ""
+
+
+def _is_hk_symbol(symbol: str) -> bool:
+    s = str(symbol).strip()
+    return s.isdigit() and len(s) == 5
+
+
 def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(DB_PATH)
@@ -99,8 +120,8 @@ def get_stock_pool() -> List[Tuple[str, str]]:
 def add_stock_to_pool(code: str, name: str) -> None:
     normalized_code = str(code).strip()
     normalized_name = str(name).strip()
-    if not normalized_code.isdigit() or len(normalized_code) != 6:
-        raise ValueError("股票代码必须是 6 位数字")
+    if not normalized_code.isdigit() or len(normalized_code) not in {5, 6}:
+        raise ValueError("股票代码必须是 5 位(港股)或 6 位(A股)数字")
     if not normalized_name:
         raise ValueError("股票名称不能为空")
 
@@ -124,13 +145,12 @@ def resolve_stock_identity(query: str) -> Tuple[str, str]:
     if not q:
         raise ValueError("请输入股票代码或股票名称")
 
-    # 代码输入兼容: 600036 / sh600036 / sz000001
-    digits = "".join(ch for ch in q if ch.isdigit())
-    code_candidate = digits[-6:] if len(digits) >= 6 else ""
+    # 代码输入兼容: 600036 / sh600036 / sz000001 / 00700 / hk00700
+    code_candidate = _normalize_symbol_input(q)
 
     # 优先在本地库解析
     with _connect() as conn:
-        if code_candidate and len(code_candidate) == 6:
+        if code_candidate and len(code_candidate) in {5, 6}:
             row = conn.execute(
                 "SELECT code, name FROM stock_info WHERE code = ?",
                 (code_candidate,),
@@ -145,35 +165,76 @@ def resolve_stock_identity(query: str) -> Tuple[str, str]:
         if row:
             return str(row[0]), str(row[1])
 
-    # 再查 AkShare 全市场代码名称映射
-    try:
-        code_name_df = ak.stock_info_a_code_name()
-    except Exception as exc:
-        raise ValueError(f"无法解析股票信息，请稍后重试: {exc}")
-
-    code_name_df["code"] = code_name_df["code"].astype(str).str.strip()
-    code_name_df["name"] = code_name_df["name"].astype(str).str.strip()
-    code_name_df["name_norm"] = code_name_df["name"].map(_normalize_name)
-
+    # A股按代码精确查
     if code_candidate and len(code_candidate) == 6:
-        matched = code_name_df[code_name_df["code"] == code_candidate]
-        if not matched.empty:
-            row = matched.iloc[0]
-            return str(row["code"]), str(row["name"])
+        try:
+            code_name_df = ak.stock_info_a_code_name()
+            code_name_df["code"] = code_name_df["code"].astype(str).str.strip()
+            code_name_df["name"] = code_name_df["name"].astype(str).str.strip()
+            matched = code_name_df[code_name_df["code"] == code_candidate]
+            if not matched.empty:
+                row = matched.iloc[0]
+                return str(row["code"]), str(row["name"])
+        except Exception:
+            pass
         raise ValueError(f"未找到代码为 {code_candidate} 的 A 股标的")
 
+    # 港股按代码精确查
+    if code_candidate and len(code_candidate) == 5:
+        try:
+            hk_df = ak.stock_hk_spot()
+            hk_df["代码"] = hk_df["代码"].astype(str).str.strip().str.zfill(5)
+            name_col = "中文名称" if "中文名称" in hk_df.columns else "名称"
+            hk_df[name_col] = hk_df[name_col].astype(str).str.strip()
+            matched = hk_df[hk_df["代码"] == code_candidate]
+            if not matched.empty:
+                row = matched.iloc[0]
+                return str(row["代码"]), str(row[name_col])
+        except Exception:
+            pass
+        raise ValueError(f"未找到代码为 {code_candidate} 的港股标的")
+
+    # 名称查询: 先A股再港股
     q_norm = _normalize_name(q)
-    matched_exact = code_name_df[code_name_df["name_norm"] == q_norm]
-    if not matched_exact.empty:
-        row = matched_exact.iloc[0]
-        return str(row["code"]), str(row["name"])
 
-    matched_contains = code_name_df[code_name_df["name_norm"].str.contains(q_norm, na=False)]
-    if not matched_contains.empty:
-        row = matched_contains.iloc[0]
-        return str(row["code"]), str(row["name"])
+    try:
+        code_name_df = ak.stock_info_a_code_name()
+        code_name_df["code"] = code_name_df["code"].astype(str).str.strip()
+        code_name_df["name"] = code_name_df["name"].astype(str).str.strip()
+        code_name_df["name_norm"] = code_name_df["name"].map(_normalize_name)
 
-    raise ValueError(f"未找到名称为 {q} 的 A 股标的")
+        matched_exact = code_name_df[code_name_df["name_norm"] == q_norm]
+        if not matched_exact.empty:
+            row = matched_exact.iloc[0]
+            return str(row["code"]), str(row["name"])
+
+        matched_contains = code_name_df[code_name_df["name_norm"].str.contains(q_norm, na=False)]
+        if not matched_contains.empty:
+            row = matched_contains.iloc[0]
+            return str(row["code"]), str(row["name"])
+    except Exception:
+        pass
+
+    try:
+        hk_df = ak.stock_hk_spot()
+        hk_df["代码"] = hk_df["代码"].astype(str).str.strip().str.zfill(5)
+        name_col = "中文名称" if "中文名称" in hk_df.columns else "名称"
+        hk_df[name_col] = hk_df[name_col].astype(str).str.strip()
+        hk_df["name_norm"] = hk_df[name_col].map(_normalize_name)
+
+        matched_exact = hk_df[hk_df["name_norm"] == q_norm]
+        if not matched_exact.empty:
+            row = matched_exact.iloc[0]
+            return str(row["代码"]), str(row[name_col])
+
+        matched_contains = hk_df[hk_df["name_norm"].str.contains(q_norm, na=False)]
+        if not matched_contains.empty:
+            row = matched_contains.iloc[0]
+            return str(row["代码"]), str(row[name_col])
+    except Exception:
+        pass
+
+    raise ValueError(f"未找到名称为 {q} 的A股/港股标的")
 
 
 def add_stock_by_query(query: str) -> Tuple[str, str]:
@@ -196,10 +257,26 @@ def remove_stock_from_pool(code: str, delete_history: bool = False) -> None:
 
 
 def _fetch_pb_from_baidu(symbol: str) -> Optional[float]:
+    if _is_hk_symbol(symbol):
+        return _fetch_hk_valuation_from_baidu(symbol, "市净率")
     try:
         df = ak.stock_zh_valuation_baidu(
             symbol=symbol,
             indicator="市净率",
+            period="近一年",
+        )
+        if df is None or df.empty:
+            return None
+        return _to_float(df.iloc[-1]["value"])
+    except Exception:
+        return None
+
+
+def _fetch_hk_valuation_from_baidu(symbol: str, indicator: str) -> Optional[float]:
+    try:
+        df = ak.stock_hk_valuation_baidu(
+            symbol=str(symbol).zfill(5),
+            indicator=indicator,
             period="近一年",
         )
         if df is None or df.empty:
@@ -242,8 +319,14 @@ def _fetch_metrics_from_eastmoney_direct(symbol: str) -> Dict[str, Optional[floa
 
 
 def _fetch_metrics_from_tencent(symbol: str) -> Dict[str, Optional[float]]:
-    exchange = "sh" if str(symbol).startswith("6") else "sz"
-    url = f"https://qt.gtimg.cn/q={exchange}{symbol}"
+    symbol_text = str(symbol).strip()
+    if _is_hk_symbol(symbol_text):
+        exchange = "hk"
+    elif symbol_text.startswith(("5", "6", "9")):
+        exchange = "sh"
+    else:
+        exchange = "sz"
+    url = f"https://qt.gtimg.cn/q={exchange}{symbol_text}"
     try:
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
         resp.raise_for_status()
@@ -260,6 +343,31 @@ def _fetch_metrics_from_tencent(symbol: str) -> Dict[str, Optional[float]]:
         return {"pe_dynamic": pe_dynamic, "pe_ttm": pe_ttm, "pb": pb}
     except Exception:
         return {"pe_dynamic": None, "pe_ttm": None, "pb": None}
+
+
+def _fetch_hk_metrics_from_em(symbol: str) -> Dict[str, Optional[float]]:
+    try:
+        df = ak.stock_hk_financial_indicator_em(symbol=str(symbol).zfill(5))
+        if df is None or df.empty:
+            return {"pe_dynamic": None, "pe_ttm": None, "pb": None, "dividend_yield": None}
+
+        row = df.iloc[0]
+        pe = _to_float(row.get("市盈率"))
+        pb = _to_float(row.get("市净率"))
+        dividend = _to_float(row.get("股息率TTM(%)"))
+
+        # 有些源返回 0.8 表示 0.8%，也可能返回 0.008，做一次容错归一化
+        if dividend is not None and 0 < dividend < 0.2:
+            dividend = dividend * 100
+
+        return {
+            "pe_dynamic": pe,
+            "pe_ttm": pe,
+            "pb": pb,
+            "dividend_yield": dividend,
+        }
+    except Exception:
+        return {"pe_dynamic": None, "pe_ttm": None, "pb": None, "dividend_yield": None}
 
 
 def _fetch_dividend_yield_from_em(symbol: str) -> Optional[float]:
@@ -315,6 +423,7 @@ def _fetch_related_commodity_prices(symbol: str) -> Dict[str, Dict[str, Optional
 
 
 def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
+    symbol = str(symbol).strip()
     name = default_name or symbol
     pe = None
     pe_ttm = None
@@ -322,30 +431,31 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
     pb = None
     dividend_yield = None
 
-    # 主通道：东方财富快照（AkShare）
-    try:
-        spot_df = ak.stock_zh_a_spot_em()
-        row_df = spot_df[spot_df["代码"] == symbol]
-        if not row_df.empty:
-            row = row_df.iloc[0]
-            name = str(row.get("名称", name))
-            pe_dynamic = _to_float(row.get("市盈率-动态") or row.get("市盈率动态") or row.get("市盈率"))
-            pb = _to_float(row.get("市净率"))
-            dividend_yield = _to_float(row.get("股息率") or row.get("股息率(%)"))
-    except Exception:
-        pass
+    if _is_hk_symbol(symbol):
+        # 港股主通道：新浪港股列表（名称）+ 东方财富财务指标（PE/PB/股息率）
+        try:
+            hk_df = ak.stock_hk_spot()
+            hk_df["代码"] = hk_df["代码"].astype(str).str.strip().str.zfill(5)
+            name_col = "中文名称" if "中文名称" in hk_df.columns else "名称"
+            row_df = hk_df[hk_df["代码"] == symbol]
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                name = str(row.get(name_col, name))
+        except Exception:
+            pass
 
-    # 兜底：至少补足 PB，保证慢引擎可持续写库。
-    if pe_dynamic is None or pe_ttm is None or pb is None:
-        em_metrics = _fetch_metrics_from_eastmoney_direct(symbol)
-        if pe_dynamic is None:
-            pe_dynamic = em_metrics.get("pe_dynamic")
+        hk_metrics = _fetch_hk_metrics_from_em(symbol)
+        pe_dynamic = hk_metrics.get("pe_dynamic")
+        pe_ttm = hk_metrics.get("pe_ttm")
+        pb = hk_metrics.get("pb")
+        dividend_yield = hk_metrics.get("dividend_yield")
+
+        # 港股估值兜底：百度估值 + 腾讯快照
         if pe_ttm is None:
-            pe_ttm = em_metrics.get("pe_ttm")
+            pe_ttm = _fetch_hk_valuation_from_baidu(symbol, "市盈率(TTM)")
         if pb is None:
-            pb = em_metrics.get("pb")
+            pb = _fetch_hk_valuation_from_baidu(symbol, "市净率")
 
-    if pe_dynamic is None or pe_ttm is None or pb is None:
         tx_metrics = _fetch_metrics_from_tencent(symbol)
         if pe_dynamic is None:
             pe_dynamic = tx_metrics.get("pe_dynamic")
@@ -353,12 +463,44 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
             pe_ttm = tx_metrics.get("pe_ttm")
         if pb is None:
             pb = tx_metrics.get("pb")
+    else:
+        # A股主通道：东方财富快照（AkShare）
+        try:
+            spot_df = ak.stock_zh_a_spot_em()
+            row_df = spot_df[spot_df["代码"] == symbol]
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                name = str(row.get("名称", name))
+                pe_dynamic = _to_float(row.get("市盈率-动态") or row.get("市盈率动态") or row.get("市盈率"))
+                pb = _to_float(row.get("市净率"))
+                dividend_yield = _to_float(row.get("股息率") or row.get("股息率(%)"))
+        except Exception:
+            pass
 
-    if pb is None:
-        pb = _fetch_pb_from_baidu(symbol)
+        # A股兜底：东方财富接口 + 腾讯 + 百度
+        if pe_dynamic is None or pe_ttm is None or pb is None:
+            em_metrics = _fetch_metrics_from_eastmoney_direct(symbol)
+            if pe_dynamic is None:
+                pe_dynamic = em_metrics.get("pe_dynamic")
+            if pe_ttm is None:
+                pe_ttm = em_metrics.get("pe_ttm")
+            if pb is None:
+                pb = em_metrics.get("pb")
 
-    if dividend_yield is None:
-        dividend_yield = _fetch_dividend_yield_from_em(symbol)
+        if pe_dynamic is None or pe_ttm is None or pb is None:
+            tx_metrics = _fetch_metrics_from_tencent(symbol)
+            if pe_dynamic is None:
+                pe_dynamic = tx_metrics.get("pe_dynamic")
+            if pe_ttm is None:
+                pe_ttm = tx_metrics.get("pe_ttm")
+            if pb is None:
+                pb = tx_metrics.get("pb")
+
+        if pb is None:
+            pb = _fetch_pb_from_baidu(symbol)
+
+        if dividend_yield is None:
+            dividend_yield = _fetch_dividend_yield_from_em(symbol)
 
     # 与中信口径对齐：优先使用 TTM PE，拿不到再退化为动态 PE
     pe = pe_ttm if pe_ttm is not None else pe_dynamic

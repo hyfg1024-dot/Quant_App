@@ -217,7 +217,7 @@ pb_threshold = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.subheader("股票池管理")
 new_query = st.sidebar.text_input(
-    "新增股票（代码或名称）", value="", placeholder="例如 600036 或 招商银行"
+    "新增股票（代码或名称）", value="", placeholder="例如 600036 / 00700 / 腾讯控股"
 )
 if st.sidebar.button("添加到股票池并抓取数据"):
     try:

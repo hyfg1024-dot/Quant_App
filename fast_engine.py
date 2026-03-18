@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -20,8 +20,37 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _normalize_symbol(symbol: str) -> str:
+    raw = str(symbol).strip().lower()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+
+    if raw.startswith("hk"):
+        if not digits:
+            return raw.replace("hk", "").strip()
+        return digits[-5:].zfill(5)
+
+    if len(digits) == 5:
+        return digits
+    if len(digits) >= 6:
+        return digits[-6:]
+    return str(symbol).strip()
+
+
 def _resolve_exchange(symbol: str) -> str:
-    return "sh" if str(symbol).startswith("6") else "sz"
+    normalized = _normalize_symbol(symbol)
+    if normalized.isdigit() and len(normalized) == 5:
+        return "hk"
+    if normalized.isdigit() and len(normalized) == 6:
+        return "sh" if normalized.startswith(("5", "6", "9")) else "sz"
+    raw = str(symbol).strip().lower()
+    if raw.startswith("hk"):
+        return "hk"
+    return "sh" if raw.startswith("sh") else "sz"
+
+
+def _resolve_market(symbol: str) -> Tuple[str, str]:
+    normalized = _normalize_symbol(symbol)
+    return _resolve_exchange(normalized), normalized
 
 
 def _build_order_book_10(bids_5: List[Dict], asks_5: List[Dict]) -> Dict[str, List[Dict]]:
@@ -110,8 +139,8 @@ def _parse_tencent_fields(symbol: str, fields: List[str]) -> Dict:
 
 
 def _fetch_tencent_quote(symbol: str) -> Dict:
-    exchange = _resolve_exchange(symbol)
-    url = TENCENT_QUOTE_URL.format(exchange=exchange, symbol=symbol)
+    exchange, normalized = _resolve_market(symbol)
+    url = TENCENT_QUOTE_URL.format(exchange=exchange, symbol=normalized)
     resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     resp.raise_for_status()
     resp.encoding = "gbk"
@@ -122,16 +151,17 @@ def _fetch_tencent_quote(symbol: str) -> Dict:
 
     payload = text.split('"', 1)[1].rsplit('"', 1)[0]
     fields = payload.split("~")
-    return _parse_tencent_fields(symbol, fields)
+    return _parse_tencent_fields(normalized, fields)
 
 
 def fetch_realtime_quote(symbol: str) -> Dict:
+    normalized = _normalize_symbol(symbol)
     try:
         return _fetch_tencent_quote(symbol)
     except Exception as exc:
         return {
-            "symbol": symbol,
-            "name": symbol,
+            "symbol": normalized,
+            "name": normalized,
             "current_price": None,
             "prev_close": None,
             "change_amount": None,
@@ -157,13 +187,13 @@ def fetch_realtime_quote(symbol: str) -> Dict:
 
 
 def fetch_intraday_flow(symbol: str) -> pd.DataFrame:
-    exchange = _resolve_exchange(symbol)
-    url = TENCENT_MINUTE_URL.format(exchange=exchange, symbol=symbol)
+    exchange, normalized = _resolve_market(symbol)
+    url = TENCENT_MINUTE_URL.format(exchange=exchange, symbol=normalized)
     resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     resp.raise_for_status()
     payload = resp.json()
 
-    code_key = f"{exchange}{symbol}"
+    code_key = f"{exchange}{normalized}"
     target = payload.get("data", {}).get(code_key, {})
     data_obj = target.get("data", {})
     raw_lines = data_obj.get("data", [])
@@ -208,13 +238,13 @@ def _calc_rsi(close: pd.Series, period: int = 6) -> pd.Series:
 
 
 def fetch_technical_indicators(symbol: str, count: int = 120) -> Dict[str, Optional[float]]:
-    exchange = _resolve_exchange(symbol)
-    url = TENCENT_DAILY_URL.format(exchange=exchange, symbol=symbol, count=count)
+    exchange, normalized = _resolve_market(symbol)
+    url = TENCENT_DAILY_URL.format(exchange=exchange, symbol=normalized, count=count)
     resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     resp.raise_for_status()
     payload = resp.json()
 
-    code_key = f"{exchange}{symbol}"
+    code_key = f"{exchange}{normalized}"
     kline_data = payload.get("data", {}).get(code_key, {}).get("qfqday", [])
     if not kline_data:
         raise ValueError("No daily kline data")
