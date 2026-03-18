@@ -521,13 +521,13 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
     export_json = json.dumps(_json_safe(export_payload), ensure_ascii=False, indent=2)
 
     js_text = json.dumps(export_json, ensure_ascii=False)
-    btn_cols = st.columns([1.15, 1.15, 5], vertical_alignment="center")
+    btn_cols = st.columns([1, 1, 5], vertical_alignment="center")
     with btn_cols[0]:
         html(
             f"""
             <div style="margin:0.15rem 0 0.35rem 0;">
               <button id="copy-json-btn-{selected_code}"
-                style="height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+                style="width:100%;height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
                 复制JSON
               </button>
               <div id="copy-json-msg-{selected_code}" style="margin-top:0.45rem;color:#2e4b6e;font-size:0.92rem;"></div>
