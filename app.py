@@ -1,7 +1,6 @@
 import altair as alt
 import pandas as pd
 import streamlit as st
-from streamlit.components.v1 import html
 
 from fast_engine import fetch_fast_panel
 from slow_engine import (
@@ -236,24 +235,23 @@ styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
 st.dataframe(styled, width="stretch", hide_index=True)
 
 st.markdown('<div class="engine-divider"><span>快引擎子版面</span></div>', unsafe_allow_html=True)
-header_cols = st.columns([3, 1, 1])
+header_cols = st.columns([2, 1, 1, 1])
 header_cols[0].markdown("#### 观察标的")
-header_cols[1].markdown("自动刷新(秒)")
-auto_refresh_sec = header_cols[1].number_input(
-    "自动刷新(秒)",
-    min_value=0,
-    max_value=300,
-    value=0,
-    step=1,
+auto_refresh_on = header_cols[1].toggle("自动刷新", value=False, key="fast_auto_refresh_on")
+header_cols[2].markdown("刷新间隔")
+auto_refresh_sec = header_cols[2].selectbox(
+    "刷新间隔(秒)",
+    options=[3, 5, 10, 15, 30, 60],
+    index=2,
+    key="fast_auto_refresh_sec",
     label_visibility="collapsed",
 )
-if header_cols[2].button("刷新", use_container_width=True):
+if header_cols[3].button("立即刷新", use_container_width=True):
     st.rerun()
-if auto_refresh_sec > 0:
-    html(
-        f"<script>setTimeout(function(){{window.parent.location.reload();}}, {int(auto_refresh_sec) * 1000});</script>",
-        height=0,
-    )
+if auto_refresh_on:
+    st.caption(f"快引擎已开启自动刷新：每 {auto_refresh_sec} 秒更新一次（局部刷新，不整页闪动）")
+else:
+    st.caption("自动刷新已关闭")
 
 btn_cols = st.columns(min(3, max(1, len(rows))))
 for idx, row in enumerate(rows):
@@ -277,145 +275,157 @@ if "fast_selected_code" not in st.session_state:
     st.session_state["fast_selected_code"] = rows[0]["code"]
     st.session_state["fast_selected_name"] = rows[0]["name"]
 
-selected_code = st.session_state["fast_selected_code"]
-selected_name = st.session_state["fast_selected_name"]
+def _render_fast_panel(selected_code: str, selected_name: str):
+    panel = fetch_fast_panel(selected_code)
+    quote = panel["quote"]
+    ind = panel["indicators"]
+    intraday_df = panel["intraday"]
+    order_book_5 = panel["order_book_5"]
 
-panel = fetch_fast_panel(selected_code)
-quote = panel["quote"]
-ind = panel["indicators"]
-intraday_df = panel["intraday"]
-order_book_5 = panel["order_book_5"]
+    if panel.get("error") and not quote.get("current_price"):
+        st.warning(f"快引擎数据拉取失败: {panel['error']}")
+        return
 
-if panel.get("error") and not quote.get("current_price"):
-    st.warning(f"快引擎数据拉取失败: {panel['error']}")
-    st.stop()
+    price_now = quote.get("current_price")
+    prev_close_for_pct = quote.get("prev_close")
+    api_change_pct = quote.get("change_pct")
+    calc_change_pct = None
+    if (
+        price_now is not None
+        and prev_close_for_pct is not None
+        and prev_close_for_pct > 0
+    ):
+        calc_change_pct = (price_now - prev_close_for_pct) / prev_close_for_pct * 100
 
-price_now = quote.get("current_price")
-prev_close_for_pct = quote.get("prev_close")
-api_change_pct = quote.get("change_pct")
-calc_change_pct = None
-if (
-    price_now is not None
-    and prev_close_for_pct is not None
-    and prev_close_for_pct > 0
-):
-    calc_change_pct = (price_now - prev_close_for_pct) / prev_close_for_pct * 100
+    # 以现价/昨收重算为主，避免接口涨跌幅字段偶发异常导致颜色反向
+    change_pct = calc_change_pct if calc_change_pct is not None else api_change_pct
+    is_down = change_pct is not None and change_pct < 0
+    price_class = "a-down" if is_down else "a-up"
+    if price_now is not None:
+        st.markdown(
+            f"""
+            <div class="fast-head-title">{selected_name} ({selected_code})</div>
+            <div class="fast-price-line">
+                <span class="price-num {price_class}">{price_now:.2f}</span>
+                <span class="chg-num {price_class}">{(change_pct or 0):+.2f}%</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(f"更新时间: {quote.get('quote_time') or 'N/A'}")
 
-# 以现价/昨收重算为主，避免接口涨跌幅字段偶发异常导致颜色反向
-change_pct = calc_change_pct if calc_change_pct is not None else api_change_pct
-is_down = change_pct is not None and change_pct < 0
-price_class = "a-down" if is_down else "a-up"
-if price_now is not None:
-    st.markdown(
-        f"""
-        <div class="fast-head-title">{selected_name} ({selected_code})</div>
-        <div class="fast-price-line">
-            <span class="price-num {price_class}">{price_now:.2f}</span>
-            <span class="chg-num {price_class}">{(change_pct or 0):+.2f}%</span>
-        </div>
-        """,
+    def _fmt(v, nd=2):
+        return "N/A" if v is None else f"{v:.{nd}f}"
+
+    macd_val = ind.get("macd_hist")
+    rsi_val = ind.get("rsi6")
+    ma20_val = ind.get("ma20")
+    ref_val = quote.get("prev_close")
+
+    macd_desc = "趋势偏强" if (macd_val is not None and macd_val > 0) else "趋势偏弱"
+    rsi_desc = "超买区间" if (rsi_val is not None and rsi_val >= 70) else ("超卖区间" if (rsi_val is not None and rsi_val <= 30) else "强弱指标")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+        f'<div class="fast-card"><div class="t">MACD 柱</div><div class="v">{_fmt(macd_val, 3)}</div><div class="d">{macd_desc}</div></div>',
         unsafe_allow_html=True,
     )
-    st.caption(f"更新时间: {quote.get('quote_time') or 'N/A'}")
+    c2.markdown(
+        f'<div class="fast-card"><div class="t">RSI (6)</div><div class="v">{_fmt(rsi_val, 2)}</div><div class="d">{rsi_desc}</div></div>',
+        unsafe_allow_html=True,
+    )
+    c3.markdown(
+        f'<div class="fast-card"><div class="t">MA20 线</div><div class="v">{_fmt(ma20_val, 2)}</div><div class="d">生命线</div></div>',
+        unsafe_allow_html=True,
+    )
+    c4.markdown(
+        f'<div class="fast-card"><div class="t">昨收基准</div><div class="v">{_fmt(ref_val, 2)}</div><div class="d">PCT Ref</div></div>',
+        unsafe_allow_html=True,
+    )
 
-def _fmt(v, nd=2):
-    return "N/A" if v is None else f"{v:.{nd}f}"
-
-macd_val = ind.get("macd_hist")
-rsi_val = ind.get("rsi6")
-ma20_val = ind.get("ma20")
-ref_val = quote.get("prev_close")
-
-macd_desc = "趋势偏强" if (macd_val is not None and macd_val > 0) else "趋势偏弱"
-rsi_desc = "超买区间" if (rsi_val is not None and rsi_val >= 70) else ("超卖区间" if (rsi_val is not None and rsi_val <= 30) else "强弱指标")
-
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(
-    f'<div class="fast-card"><div class="t">MACD 柱</div><div class="v">{_fmt(macd_val, 3)}</div><div class="d">{macd_desc}</div></div>',
-    unsafe_allow_html=True,
-)
-c2.markdown(
-    f'<div class="fast-card"><div class="t">RSI (6)</div><div class="v">{_fmt(rsi_val, 2)}</div><div class="d">{rsi_desc}</div></div>',
-    unsafe_allow_html=True,
-)
-c3.markdown(
-    f'<div class="fast-card"><div class="t">MA20 线</div><div class="v">{_fmt(ma20_val, 2)}</div><div class="d">生命线</div></div>',
-    unsafe_allow_html=True,
-)
-c4.markdown(
-    f'<div class="fast-card"><div class="t">昨收基准</div><div class="v">{_fmt(ref_val, 2)}</div><div class="d">PCT Ref</div></div>',
-    unsafe_allow_html=True,
-)
-
-left, right = st.columns([2, 1])
-with left:
-    st.markdown("## 资金分时")
-    if intraday_df.empty:
-        st.info("暂无分时资金数据")
-    else:
-        chart_df = intraday_df.set_index("time")
-        area_df = chart_df.reset_index()
-        # A股配色: 涨红跌绿, 平盘中性灰
-        area_color = "#ef4444" if (change_pct or 0) > 0 else ("#22c55e" if (change_pct or 0) < 0 else "#94a3b8")
-        chart = (
-            alt.Chart(area_df)
-            .mark_area(color=area_color, opacity=0.9)
-            .encode(
-                x=alt.X("time:T", title="time"),
-                y=alt.Y("volume_lot:Q", title="vol"),
-            )
-            .properties(height=330)
-            .configure_view(strokeOpacity=0)
-            .configure_axis(gridColor="#dbe4f0", labelColor="#4a5f7c", titleColor="#4a5f7c")
-        )
-        st.altair_chart(chart, use_container_width=True)
-
-with right:
-    st.markdown('<div class="ob-title">实时盘口 (单位:手)</div>', unsafe_allow_html=True)
-    sell_df = pd.DataFrame(order_book_5.get("sell", []))
-    buy_df = pd.DataFrame(order_book_5.get("buy", []))
-
-    if sell_df.empty or buy_df.empty:
-        st.info("暂无盘口数据")
-    else:
-        sell_df = sell_df.sort_values("level", ascending=False).copy()
-        buy_df = buy_df.sort_values("level", ascending=True).copy()
-        vol_max = max(
-            1.0,
-            max(pd.to_numeric(sell_df["volume_lot"], errors="coerce").fillna(0).max(), pd.to_numeric(buy_df["volume_lot"], errors="coerce").fillna(0).max()),
-        )
-
-        def _ob_rows(df: pd.DataFrame, side: str) -> str:
-            rows_html = ""
-            for _, r in df.iterrows():
-                lvl = int(r.get("level", 0))
-                price = r.get("price")
-                vol = r.get("volume_lot")
-                vol_num = float(vol) if vol is not None and pd.notna(vol) else 0.0
-                width = int((vol_num / vol_max) * 100)
-                width = max(width, 1 if vol_num > 0 else 0)
-                lab_class = "ob-sell" if side == "sell" else "ob-buy"
-                side_txt = "卖" if side == "sell" else "买"
-                bar_class = "sell" if side == "sell" else "buy"
-                p_txt = f"{float(price):.2f}" if price is not None and pd.notna(price) else "--"
-                v_txt = f"{int(vol_num)}" if vol_num > 0 else "--"
-                rows_html += (
-                    f'<div class="ob-row">'
-                    f'<div class="ob-lab {lab_class}">{side_txt}{lvl}</div>'
-                    f'<div class="ob-price {lab_class}">{p_txt}</div>'
-                    f'<div class="ob-bar-wrap"><div class="ob-bar {bar_class}" style="width:{width}%"></div></div>'
-                    f'<div class="ob-vol">{v_txt}</div>'
-                    f"</div>"
+    left, right = st.columns([2, 1])
+    with left:
+        st.markdown("## 资金分时")
+        if intraday_df.empty:
+            st.info("暂无分时资金数据")
+        else:
+            chart_df = intraday_df.set_index("time")
+            area_df = chart_df.reset_index()
+            # A股配色: 涨红跌绿, 平盘中性灰
+            area_color = "#ef4444" if (change_pct or 0) > 0 else ("#22c55e" if (change_pct or 0) < 0 else "#94a3b8")
+            chart = (
+                alt.Chart(area_df)
+                .mark_area(color=area_color, opacity=0.9)
+                .encode(
+                    x=alt.X("time:T", title="time"),
+                    y=alt.Y("volume_lot:Q", title="vol"),
                 )
-            return rows_html
+                .properties(height=330)
+                .configure_view(strokeOpacity=0)
+                .configure_axis(gridColor="#dbe4f0", labelColor="#4a5f7c", titleColor="#4a5f7c")
+            )
+            st.altair_chart(chart, use_container_width=True)
 
-        html = (
-            '<div class="ob-block">'
-            + _ob_rows(sell_df, "sell")
-            + '<div class="ob-sep"></div>'
-            + _ob_rows(buy_df, "buy")
-            + "</div>"
-        )
-        st.markdown(html, unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="ob-title">实时盘口 (单位:手)</div>', unsafe_allow_html=True)
+        sell_df = pd.DataFrame(order_book_5.get("sell", []))
+        buy_df = pd.DataFrame(order_book_5.get("buy", []))
 
-st.caption(panel.get("depth_note", ""))
+        if sell_df.empty or buy_df.empty:
+            st.info("暂无盘口数据")
+        else:
+            sell_df = sell_df.sort_values("level", ascending=False).copy()
+            buy_df = buy_df.sort_values("level", ascending=True).copy()
+            vol_max = max(
+                1.0,
+                max(pd.to_numeric(sell_df["volume_lot"], errors="coerce").fillna(0).max(), pd.to_numeric(buy_df["volume_lot"], errors="coerce").fillna(0).max()),
+            )
+
+            def _ob_rows(df: pd.DataFrame, side: str) -> str:
+                rows_html = ""
+                for _, r in df.iterrows():
+                    lvl = int(r.get("level", 0))
+                    price = r.get("price")
+                    vol = r.get("volume_lot")
+                    vol_num = float(vol) if vol is not None and pd.notna(vol) else 0.0
+                    width = int((vol_num / vol_max) * 100)
+                    width = max(width, 1 if vol_num > 0 else 0)
+                    lab_class = "ob-sell" if side == "sell" else "ob-buy"
+                    side_txt = "卖" if side == "sell" else "买"
+                    bar_class = "sell" if side == "sell" else "buy"
+                    p_txt = f"{float(price):.2f}" if price is not None and pd.notna(price) else "--"
+                    v_txt = f"{int(vol_num)}" if vol_num > 0 else "--"
+                    rows_html += (
+                        f'<div class="ob-row">'
+                        f'<div class="ob-lab {lab_class}">{side_txt}{lvl}</div>'
+                        f'<div class="ob-price {lab_class}">{p_txt}</div>'
+                        f'<div class="ob-bar-wrap"><div class="ob-bar {bar_class}" style="width:{width}%"></div></div>'
+                        f'<div class="ob-vol">{v_txt}</div>'
+                        f"</div>"
+                    )
+                return rows_html
+
+            html_text = (
+                '<div class="ob-block">'
+                + _ob_rows(sell_df, "sell")
+                + '<div class="ob-sep"></div>'
+                + _ob_rows(buy_df, "buy")
+                + "</div>"
+            )
+            st.markdown(html_text, unsafe_allow_html=True)
+
+    st.caption(panel.get("depth_note", ""))
+
+def _render_fast_panel_fragment():
+    selected_code = st.session_state.get("fast_selected_code", rows[0]["code"])
+    selected_name = st.session_state.get("fast_selected_name", rows[0]["name"])
+    _render_fast_panel(selected_code, selected_name)
+
+if auto_refresh_on:
+    @st.fragment(run_every=f"{int(auto_refresh_sec)}s")
+    def _auto_fast_panel_fragment():
+        _render_fast_panel_fragment()
+
+    _auto_fast_panel_fragment()
+else:
+    _render_fast_panel_fragment()
