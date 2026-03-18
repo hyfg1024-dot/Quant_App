@@ -65,7 +65,8 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS stock_info (
                 code TEXT PRIMARY KEY,
-                name TEXT NOT NULL
+                name TEXT NOT NULL,
+                bucket TEXT NOT NULL DEFAULT 'watch'
             )
             """
         )
@@ -89,6 +90,11 @@ def init_db() -> None:
         existing_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(fundamental_data)").fetchall()
         }
+        stock_info_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(stock_info)").fetchall()
+        }
+        if "bucket" not in stock_info_cols:
+            conn.execute("ALTER TABLE stock_info ADD COLUMN bucket TEXT NOT NULL DEFAULT 'watch'")
         if "pe_ttm" not in existing_cols:
             conn.execute("ALTER TABLE fundamental_data ADD COLUMN pe_ttm REAL")
         if "pe_dynamic" not in existing_cols:
@@ -99,8 +105,8 @@ def init_db() -> None:
 def upsert_stock_pool(stock_pool: List[Tuple[str, str]] = STOCK_POOL) -> None:
     with _connect() as conn:
         conn.executemany(
-            "INSERT OR REPLACE INTO stock_info(code, name) VALUES (?, ?)",
-            stock_pool,
+            "INSERT OR REPLACE INTO stock_info(code, name, bucket) VALUES (?, ?, 'watch')",
+            [(code, name) for code, name in stock_pool],
         )
         conn.commit()
 
@@ -108,7 +114,13 @@ def upsert_stock_pool(stock_pool: List[Tuple[str, str]] = STOCK_POOL) -> None:
 def get_stock_pool() -> List[Tuple[str, str]]:
     init_db()
     with _connect() as conn:
-        cur = conn.execute("SELECT code, name FROM stock_info ORDER BY code")
+        cur = conn.execute(
+            """
+            SELECT code, name
+            FROM stock_info
+            ORDER BY CASE bucket WHEN 'holding' THEN 0 ELSE 1 END, code
+            """
+        )
         rows = cur.fetchall()
         if rows:
             return [(str(row[0]), str(row[1])) for row in rows]
@@ -117,19 +129,35 @@ def get_stock_pool() -> List[Tuple[str, str]]:
     return STOCK_POOL.copy()
 
 
-def add_stock_to_pool(code: str, name: str) -> None:
+def get_stock_pool_with_bucket() -> List[Tuple[str, str, str]]:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT code, name, COALESCE(bucket, 'watch') AS bucket
+            FROM stock_info
+            ORDER BY CASE bucket WHEN 'holding' THEN 0 ELSE 1 END, code
+            """
+        )
+        return [(str(row[0]), str(row[1]), str(row[2])) for row in cur.fetchall()]
+
+
+def add_stock_to_pool(code: str, name: str, bucket: str = "watch") -> None:
     normalized_code = str(code).strip()
     normalized_name = str(name).strip()
+    normalized_bucket = str(bucket).strip().lower()
     if not normalized_code.isdigit() or len(normalized_code) not in {5, 6}:
         raise ValueError("股票代码必须是 5 位(港股)或 6 位(A股)数字")
     if not normalized_name:
         raise ValueError("股票名称不能为空")
+    if normalized_bucket not in {"holding", "watch"}:
+        raise ValueError("bucket 必须是 holding 或 watch")
 
     init_db()
     with _connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO stock_info(code, name) VALUES (?, ?)",
-            (normalized_code, normalized_name),
+            "INSERT OR REPLACE INTO stock_info(code, name, bucket) VALUES (?, ?, ?)",
+            (normalized_code, normalized_name, normalized_bucket),
         )
         conn.commit()
 
@@ -237,9 +265,9 @@ def resolve_stock_identity(query: str) -> Tuple[str, str]:
     raise ValueError(f"未找到名称为 {q} 的A股/港股标的")
 
 
-def add_stock_by_query(query: str) -> Tuple[str, str]:
+def add_stock_by_query(query: str, bucket: str = "watch") -> Tuple[str, str]:
     code, name = resolve_stock_identity(query)
-    add_stock_to_pool(code, name)
+    add_stock_to_pool(code, name, bucket=bucket)
     return code, name
 
 
