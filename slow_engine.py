@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import akshare as ak
+import pandas as pd
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -237,6 +238,32 @@ def _fetch_metrics_from_tencent(symbol: str) -> Dict[str, Optional[float]]:
         return {"pe": None, "pb": None}
 
 
+def _fetch_dividend_yield_from_em(symbol: str) -> Optional[float]:
+    try:
+        df = ak.stock_fhps_detail_em(symbol=str(symbol))
+        if df is None or df.empty:
+            return None
+        if "现金分红-股息率" not in df.columns:
+            return None
+
+        tmp = df.copy()
+        tmp["现金分红-股息率"] = pd.to_numeric(tmp["现金分红-股息率"], errors="coerce")
+        tmp = tmp.dropna(subset=["现金分红-股息率"])
+        if tmp.empty:
+            return None
+
+        # 优先使用年报(12-31)，避免中报分红导致股息率偏低。
+        annual = tmp[tmp["报告期"].astype(str).str.endswith("12-31")]
+        chosen = annual if not annual.empty else tmp
+        val = _to_float(chosen.iloc[-1]["现金分红-股息率"])
+        if val is None:
+            return None
+        # 接口返回小数口径(0.055)，统一转换为百分比口径(5.50)。
+        return val * 100
+    except Exception:
+        return None
+
+
 def _fetch_related_commodity_prices(symbol: str) -> Dict[str, Dict[str, Optional[float]]]:
     # Sina 内盘连续合约代码；不同品种可按策略需要继续扩展。
     contracts_map = {
@@ -299,6 +326,9 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
 
     if pb is None:
         pb = _fetch_pb_from_baidu(symbol)
+
+    if dividend_yield is None:
+        dividend_yield = _fetch_dividend_yield_from_em(symbol)
 
     commodity_prices = _fetch_related_commodity_prices(symbol)
     trade_date = datetime.now().strftime("%Y-%m-%d")
