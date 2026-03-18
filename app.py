@@ -195,18 +195,26 @@ st.markdown(
         border-top: 1px solid #d7e0ec;
         margin: 0.5rem 0;
     }
-    .mini-del-wrap button {
+    .mini-del-wrap div.stButton > button {
         min-height: 1.9rem !important;
         padding: 0 !important;
         font-size: 1.35rem !important;
         background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
         color: #60748f !important;
         border: none !important;
         box-shadow: none !important;
     }
-    .mini-del-wrap button:hover {
+    .mini-del-wrap div.stButton > button:hover,
+    .mini-del-wrap div.stButton > button:focus,
+    .mini-del-wrap div.stButton > button:active {
         background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
         color: #1f334f !important;
+        border: none !important;
+        box-shadow: none !important;
     }
     </style>
     """,
@@ -371,7 +379,7 @@ for idx, row in enumerate(rows):
     del_row = col.columns([3, 2, 3])
     with del_row[1]:
         st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
-        if st.button("♻", key=f"mini_del_{row['code']}", use_container_width=False, help=f"删除 {row['name']}"):
+        if st.button("🗑️", key=f"mini_del_{row['code']}", use_container_width=False, help=f"删除 {row['name']}"):
             remove_stock_from_pool(row["code"])
             if st.session_state.get("fast_selected_code") == row["code"]:
                 st.session_state.pop("fast_selected_code", None)
