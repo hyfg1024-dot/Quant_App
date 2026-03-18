@@ -1,6 +1,10 @@
+import json
+from datetime import datetime
+
 import altair as alt
 import pandas as pd
 import streamlit as st
+from streamlit.components.v1 import html
 
 from fast_engine import fetch_fast_panel
 from slow_engine import (
@@ -258,6 +262,32 @@ def _format_display_time(v):
         return None
     return dt.strftime("%m-%d %H:%M:%S")
 
+
+def _json_safe(v):
+    if isinstance(v, dict):
+        return {k: _json_safe(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x) for x in v]
+    if isinstance(v, pd.DataFrame):
+        return _json_safe(v.to_dict(orient="records"))
+    if isinstance(v, pd.Series):
+        return _json_safe(v.to_dict())
+    if isinstance(v, datetime):
+        return v.isoformat(timespec="seconds")
+    if isinstance(v, pd.Timestamp):
+        return v.isoformat()
+    if hasattr(v, "item"):
+        try:
+            return _json_safe(v.item())
+        except Exception:
+            pass
+    try:
+        if pd.isna(v):
+            return None
+    except Exception:
+        pass
+    return v
+
 snapshot_df["更新时间"] = snapshot_df["更新时间"].apply(_format_display_time)
 snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
@@ -365,6 +395,60 @@ def _render_fast_panel(selected_code: str, selected_name: str):
         )
         q_time = _format_display_time(quote.get("quote_time"))
         st.caption(f"更新时间: {q_time if q_time else 'N/A'}")
+
+    selected_slow = next((r for r in rows if str(r.get("code")) == str(selected_code)), {})
+    export_payload = {
+        "meta": {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "app": "Defensive Quant Dashboard",
+        },
+        "stock": {"code": selected_code, "name": selected_name},
+        "slow_engine": selected_slow,
+        "fast_engine": {
+            "quote": quote,
+            "indicators": ind,
+            "order_book_5": order_book_5,
+            "intraday": intraday_df,
+            "depth_note": panel.get("depth_note"),
+            "error": panel.get("error"),
+        },
+    }
+    export_json = json.dumps(_json_safe(export_payload), ensure_ascii=False, indent=2)
+
+    export_cols = st.columns([1, 1])
+    if export_cols[0].button("复制该股票JSON", key=f"copy_json_{selected_code}", use_container_width=True):
+        js_text = json.dumps(export_json, ensure_ascii=False)
+        html(
+            f"""
+            <script>
+            (async function(){{
+                const text = {js_text};
+                try {{
+                    await navigator.clipboard.writeText(text);
+                }} catch (e) {{
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    ta.remove();
+                }}
+            }})();
+            </script>
+            """,
+            height=0,
+        )
+        st.success("JSON 已复制到剪贴板，可直接粘贴给其他 AI。")
+    export_cols[1].download_button(
+        "下载JSON",
+        data=export_json,
+        file_name=f"{selected_code}_snapshot.json",
+        mime="application/json",
+        use_container_width=True,
+        key=f"download_json_{selected_code}",
+    )
+    with st.expander("JSON预览", expanded=False):
+        st.code(export_json, language="json")
 
     def _fmt(v, nd=2):
         return "N/A" if v is None else f"{v:.{nd}f}"
