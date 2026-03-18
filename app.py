@@ -97,18 +97,26 @@ st.markdown(
         font-weight: 700 !important;
     }
     .engine-divider {
-        margin: 1.2rem 0 1rem 0;
-        border-top: 2px solid #c7d3e3;
+        margin: 2.4rem 0 2rem 0;
+        border-top: 4px solid #b8c9de;
         position: relative;
     }
     .engine-divider span {
         position: relative;
-        top: -0.85rem;
+        top: -1.45rem;
         background: #edf3fa;
-        padding: 0 0.7rem;
-        color: #4f6684;
-        font-weight: 700;
-        font-size: 0.9rem;
+        padding: 0 0.8rem;
+        color: #15253f;
+        font-weight: 800;
+        font-size: 2.05rem;
+        line-height: 1.1;
+    }
+    .section-title {
+        color: #15253f;
+        font-size: 2.05rem;
+        font-weight: 800;
+        line-height: 1.1;
+        margin: 0.9rem 0 0.8rem 0;
     }
     .fast-head-title {
         color: #324760;
@@ -272,7 +280,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("去幻觉量化防御交易看板")
+st.title("股票观察面板")
 st.caption("慢引擎与快引擎分离 | PE口径: TTM优先(对齐中信)")
 
 init_db()
@@ -381,7 +389,7 @@ def _is_market_open(code: str) -> bool:
 snapshot_df["更新时间"] = snapshot_df["更新时间"].apply(_format_display_time)
 snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
-st.subheader("慢引擎主面板")
+st.markdown('<div class="section-title">基本面</div>', unsafe_allow_html=True)
 
 def _highlight_defensive(row):
     cond = (
@@ -404,7 +412,7 @@ if "fast_selected_code" not in st.session_state:
 selected_code_for_ctrl = st.session_state["fast_selected_code"]
 market_open_for_ctrl = _is_market_open(selected_code_for_ctrl)
 
-st.markdown('<div class="engine-divider"><span>快引擎子版面</span></div>', unsafe_allow_html=True)
+st.markdown('<div class="engine-divider"><span>交易面</span></div>', unsafe_allow_html=True)
 header_cols = st.columns([2.4, 0.8, 0.6, 0.9], vertical_alignment="bottom")
 header_cols[0].markdown("#### 观察标的")
 auto_refresh_on = header_cols[1].checkbox("自动刷新", value=False, key="fast_auto_refresh_on")
