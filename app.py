@@ -216,6 +216,14 @@ st.markdown(
         border: none !important;
         box-shadow: none !important;
     }
+    .stock-open-wrap div.stButton > button {
+        min-height: 92px !important;
+        border-radius: 14px !important;
+        white-space: pre-line !important;
+        line-height: 1.28 !important;
+        font-size: 1.02rem !important;
+        padding: 0.45rem 0.35rem !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -369,29 +377,49 @@ if auto_refresh_on:
 else:
     st.caption("自动刷新已关闭")
 
-btn_rows = st.columns(min(3, max(1, len(rows))))
-for idx, row in enumerate(rows):
-    col = btn_rows[idx % len(btn_rows)]
-    if col.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
-        st.session_state["fast_selected_code"] = row["code"]
-        st.session_state["fast_selected_name"] = row["name"]
+def _stock_grid_cols(total: int) -> int:
+    if total <= 4:
+        return total
+    if total <= 8:
+        return 4
+    if total <= 12:
+        return 5
+    return 6
 
-    del_row = col.columns([3, 2, 3])
-    with del_row[1]:
-        st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
-        if st.button(
-            "🗑️",
-            key=f"mini_del_{row['code']}",
-            use_container_width=False,
-            type="tertiary",
-            help=f"删除 {row['name']}",
-        ):
-            remove_stock_from_pool(row["code"])
-            if st.session_state.get("fast_selected_code") == row["code"]:
-                st.session_state.pop("fast_selected_code", None)
-                st.session_state.pop("fast_selected_name", None)
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+
+grid_cols = _stock_grid_cols(len(rows))
+for start in range(0, len(rows), grid_cols):
+    row_cols = st.columns(grid_cols)
+    chunk = rows[start : start + grid_cols]
+    for idx, row in enumerate(chunk):
+        col = row_cols[idx]
+        with col:
+            st.markdown('<div class="stock-open-wrap">', unsafe_allow_html=True)
+            if st.button(
+                f"{row['name']}\n{row['code']}",
+                key=f"open_fast_{row['code']}",
+                use_container_width=True,
+            ):
+                st.session_state["fast_selected_code"] = row["code"]
+                st.session_state["fast_selected_name"] = row["name"]
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            del_row = st.columns([4, 1, 4])
+            with del_row[1]:
+                st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
+                if st.button(
+                    "🗑️",
+                    key=f"mini_del_{row['code']}",
+                    use_container_width=False,
+                    type="tertiary",
+                    help=f"删除 {row['name']}",
+                ):
+                    remove_stock_from_pool(row["code"])
+                    if st.session_state.get("fast_selected_code") == row["code"]:
+                        st.session_state.pop("fast_selected_code", None)
+                        st.session_state.pop("fast_selected_name", None)
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
 
 with st.expander("管理观察池（删除）", expanded=False):
     del_options = [f"{r['name']} ({r['code']})" for r in rows]
