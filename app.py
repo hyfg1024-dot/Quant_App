@@ -148,7 +148,7 @@ st.markdown(
 )
 
 st.title("去幻觉量化防御交易看板")
-st.caption("慢引擎: 基本面估值 | 快引擎: 实时执行信号")
+st.caption("慢引擎: 基本面估值 | 快引擎: 实时执行信号 | PE口径: TTM优先(对齐中信)")
 
 init_db()
 
@@ -208,7 +208,7 @@ if not rows:
 
 snapshot_df = pd.DataFrame(rows)
 snapshot_df = snapshot_df[["code", "name", "trade_date", "pe", "pb", "dividend_yield", "created_at"]]
-snapshot_df.columns = ["代码", "名称", "日期", "PE", "PB", "股息率", "更新时间"]
+snapshot_df.columns = ["代码", "名称", "日期", "PE(TTM)", "PB", "股息率", "更新时间"]
 snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
 st.subheader("股票池（慢引擎快照）")
@@ -223,7 +223,7 @@ def _highlight_defensive(row):
     return ["background-color: #dcecff; color: #0f172a" if cond else "" for _ in row]
 
 styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
-    {"PE": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}"}, na_rep="N/A"
+    {"PE(TTM)": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}"}, na_rep="N/A"
 )
 st.dataframe(styled, width="stretch", hide_index=True)
 

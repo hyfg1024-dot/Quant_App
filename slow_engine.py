@@ -55,6 +55,8 @@ def init_db() -> None:
                 trade_date TEXT NOT NULL,
                 code TEXT NOT NULL,
                 pe REAL,
+                pe_ttm REAL,
+                pe_dynamic REAL,
                 pb REAL,
                 dividend_yield REAL,
                 commodity_prices TEXT,
@@ -63,6 +65,13 @@ def init_db() -> None:
             )
             """
         )
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(fundamental_data)").fetchall()
+        }
+        if "pe_ttm" not in existing_cols:
+            conn.execute("ALTER TABLE fundamental_data ADD COLUMN pe_ttm REAL")
+        if "pe_dynamic" not in existing_cols:
+            conn.execute("ALTER TABLE fundamental_data ADD COLUMN pe_dynamic REAL")
         conn.commit()
 
 
@@ -189,7 +198,7 @@ def _fetch_pb_from_baidu(symbol: str) -> Optional[float]:
 
 def _fetch_metrics_from_eastmoney_direct(symbol: str) -> Dict[str, Optional[float]]:
     secid = ("1." if str(symbol).startswith("6") else "0.") + str(symbol)
-    fields = "f57,f58,f162,f167"
+    fields = "f57,f58,f9,f162,f167"
     urls = [
         "https://push2.eastmoney.com/api/qt/stock/get",
         "http://push2.eastmoney.com/api/qt/stock/get",
@@ -209,13 +218,14 @@ def _fetch_metrics_from_eastmoney_direct(symbol: str) -> Dict[str, Optional[floa
                 payload = resp.json()
                 data = payload.get("data") or {}
                 return {
-                    "pe": _to_float(data.get("f162")),  # 动态市盈率
+                    "pe_dynamic": _to_float(data.get("f162")),  # 动态市盈率
+                    "pe_ttm": _to_float(data.get("f9")),        # 近似按 TTM 口径
                     "pb": _to_float(data.get("f167")),  # 市净率
                 }
             except Exception:
                 continue
 
-    return {"pe": None, "pb": None}
+    return {"pe_dynamic": None, "pe_ttm": None, "pb": None}
 
 
 def _fetch_metrics_from_tencent(symbol: str) -> Dict[str, Optional[float]]:
@@ -230,12 +240,13 @@ def _fetch_metrics_from_tencent(symbol: str) -> Dict[str, Optional[float]]:
             return {"pe": None, "pb": None}
         payload = text.split('"', 1)[1].rsplit('"', 1)[0]
         fields = payload.split("~")
-        # 腾讯字段: 46=PB, 52=动态PE
-        pe = _to_float(fields[52]) if len(fields) > 52 else None
+        # 腾讯字段: 46=PB, 52=动态PE, 53=TTM PE
+        pe_dynamic = _to_float(fields[52]) if len(fields) > 52 else None
+        pe_ttm = _to_float(fields[53]) if len(fields) > 53 else None
         pb = _to_float(fields[46]) if len(fields) > 46 else None
-        return {"pe": pe, "pb": pb}
+        return {"pe_dynamic": pe_dynamic, "pe_ttm": pe_ttm, "pb": pb}
     except Exception:
-        return {"pe": None, "pb": None}
+        return {"pe_dynamic": None, "pe_ttm": None, "pb": None}
 
 
 def _fetch_dividend_yield_from_em(symbol: str) -> Optional[float]:
@@ -293,6 +304,8 @@ def _fetch_related_commodity_prices(symbol: str) -> Dict[str, Dict[str, Optional
 def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
     name = default_name or symbol
     pe = None
+    pe_ttm = None
+    pe_dynamic = None
     pb = None
     dividend_yield = None
 
@@ -303,24 +316,28 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
         if not row_df.empty:
             row = row_df.iloc[0]
             name = str(row.get("名称", name))
-            pe = _to_float(row.get("市盈率-动态") or row.get("市盈率动态") or row.get("市盈率"))
+            pe_dynamic = _to_float(row.get("市盈率-动态") or row.get("市盈率动态") or row.get("市盈率"))
             pb = _to_float(row.get("市净率"))
             dividend_yield = _to_float(row.get("股息率") or row.get("股息率(%)"))
     except Exception:
         pass
 
     # 兜底：至少补足 PB，保证慢引擎可持续写库。
-    if pe is None or pb is None:
+    if pe_dynamic is None or pe_ttm is None or pb is None:
         em_metrics = _fetch_metrics_from_eastmoney_direct(symbol)
-        if pe is None:
-            pe = em_metrics.get("pe")
+        if pe_dynamic is None:
+            pe_dynamic = em_metrics.get("pe_dynamic")
+        if pe_ttm is None:
+            pe_ttm = em_metrics.get("pe_ttm")
         if pb is None:
             pb = em_metrics.get("pb")
 
-    if pe is None or pb is None:
+    if pe_dynamic is None or pe_ttm is None or pb is None:
         tx_metrics = _fetch_metrics_from_tencent(symbol)
-        if pe is None:
-            pe = tx_metrics.get("pe")
+        if pe_dynamic is None:
+            pe_dynamic = tx_metrics.get("pe_dynamic")
+        if pe_ttm is None:
+            pe_ttm = tx_metrics.get("pe_ttm")
         if pb is None:
             pb = tx_metrics.get("pb")
 
@@ -330,6 +347,9 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
     if dividend_yield is None:
         dividend_yield = _fetch_dividend_yield_from_em(symbol)
 
+    # 与中信口径对齐：优先使用 TTM PE，拿不到再退化为动态 PE
+    pe = pe_ttm if pe_ttm is not None else pe_dynamic
+
     commodity_prices = _fetch_related_commodity_prices(symbol)
     trade_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -338,6 +358,8 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
         "code": symbol,
         "name": name,
         "pe": pe,
+        "pe_ttm": pe_ttm,
+        "pe_dynamic": pe_dynamic,
         "pb": pb,
         "dividend_yield": dividend_yield,
         "commodity_prices": commodity_prices,
@@ -347,7 +369,7 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
 def save_fundamental(record: Dict) -> None:
     with _connect() as conn:
         cur = conn.cursor()
-        for field in ("pe", "pb", "dividend_yield"):
+        for field in ("pe", "pe_ttm", "pe_dynamic", "pb", "dividend_yield"):
             if record.get(field) is None:
                 cur.execute(
                     f"""
@@ -366,13 +388,15 @@ def save_fundamental(record: Dict) -> None:
         conn.execute(
             """
             INSERT INTO fundamental_data(
-                trade_date, code, pe, pb, dividend_yield, commodity_prices, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                trade_date, code, pe, pe_ttm, pe_dynamic, pb, dividend_yield, commodity_prices, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record["trade_date"],
                 record["code"],
                 record["pe"],
+                record.get("pe_ttm"),
+                record.get("pe_dynamic"),
                 record["pb"],
                 record["dividend_yield"],
                 json.dumps(record["commodity_prices"], ensure_ascii=False),
@@ -405,6 +429,8 @@ def get_latest_fundamental_snapshot() -> List[Dict]:
             f.code,
             s.name,
             f.pe,
+            f.pe_ttm,
+            f.pe_dynamic,
             f.pb,
             f.dividend_yield,
             f.commodity_prices,
@@ -413,7 +439,7 @@ def get_latest_fundamental_snapshot() -> List[Dict]:
         FROM fundamental_data f
         JOIN stock_info s ON s.code = f.code
     )
-    SELECT trade_date, code, name, pe, pb, dividend_yield, commodity_prices, created_at
+    SELECT trade_date, code, name, pe, pe_ttm, pe_dynamic, pb, dividend_yield, commodity_prices, created_at
     FROM ranked
     WHERE rn = 1
     ORDER BY code
@@ -454,7 +480,7 @@ def run_smoke_test() -> None:
     for row in snapshot:
         print(
             f"  - {row['code']} {row['name']} | date={row['trade_date']} "
-            f"PE={row['pe']} PB={row['pb']} DY={row['dividend_yield']}"
+            f"PE(TTM)={row['pe']} PE(动)={row.get('pe_dynamic')} PB={row['pb']} DY={row['dividend_yield']}"
         )
 
 
