@@ -216,33 +216,25 @@ st.markdown(
         border: none !important;
         box-shadow: none !important;
     }
-    .stock-tile {
-        border: 1px solid #9bb9e3;
-        border-radius: 14px;
-        background: #dbeafe;
-        height: 86px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 0.2rem;
-        text-align: center;
+    .stock-open-wrap div.stButton > button {
+        min-height: 72px !important;
+        border-radius: 14px !important;
+        white-space: pre-line !important;
+        line-height: 1.22 !important;
+        font-size: 0.92rem !important;
+        padding: 0.22rem 0.3rem !important;
     }
-    .stock-tile.selected {
-        border: 2px solid #4b83c8;
-        box-shadow: inset 0 0 0 1px rgba(75, 131, 200, 0.15);
+    .stock-open-wrap div.stButton > button p:first-child {
+        font-size: 1.8rem !important;
+        font-weight: 800 !important;
     }
-    .stock-tile .name {
-        font-size: 1.05rem;
-        font-weight: 800;
-        color: #17345d;
-        line-height: 1.2;
+    .stock-open-wrap div.stButton > button p:last-child {
+        font-size: 1.05rem !important;
+        font-weight: 700 !important;
+        margin-top: 0.1rem !important;
     }
-    .stock-tile .code {
-        font-size: 0.86rem;
-        font-weight: 700;
-        color: #355782;
-        line-height: 1;
+    .mini-del-wrap {
+        margin-top: -0.25rem !important;
     }
     </style>
     """,
@@ -414,23 +406,18 @@ for start in range(0, len(rows), grid_cols):
     for idx, row in enumerate(chunk):
         col = row_cols[idx]
         with col:
-            is_selected = st.session_state.get("fast_selected_code") == row["code"]
-            selected_cls = "selected" if is_selected else ""
-            st.markdown(
-                f"""
-                <div class="stock-tile {selected_cls}">
-                    <div class="name">{row['name']}</div>
-                    <div class="code">{row['code']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            act_cols = st.columns([1, 1], vertical_alignment="center")
-            with act_cols[0]:
-                if st.button("选中", key=f"open_fast_{row['code']}", use_container_width=True, type="tertiary"):
-                    st.session_state["fast_selected_code"] = row["code"]
-                    st.session_state["fast_selected_name"] = row["name"]
-            with act_cols[1]:
+            st.markdown('<div class="stock-open-wrap">', unsafe_allow_html=True)
+            if st.button(
+                f"{row['name']}\n{row['code']}",
+                key=f"open_fast_{row['code']}",
+                use_container_width=True,
+            ):
+                st.session_state["fast_selected_code"] = row["code"]
+                st.session_state["fast_selected_name"] = row["name"]
+            st.markdown("</div>", unsafe_allow_html=True)
+
+            del_row = st.columns([2, 1, 2], vertical_alignment="center")
+            with del_row[1]:
                 st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
                 if st.button(
                     "🗑️",
