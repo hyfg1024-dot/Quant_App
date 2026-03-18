@@ -220,12 +220,12 @@ st.markdown(
         border: 1px solid #9bb9e3;
         border-radius: 14px;
         background: #dbeafe;
-        height: 124px;
+        height: 86px;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 0.35rem;
+        gap: 0.2rem;
         text-align: center;
     }
     .stock-tile.selected {
@@ -233,13 +233,13 @@ st.markdown(
         box-shadow: inset 0 0 0 1px rgba(75, 131, 200, 0.15);
     }
     .stock-tile .name {
-        font-size: 1.45rem;
+        font-size: 1.05rem;
         font-weight: 800;
         color: #17345d;
         line-height: 1.2;
     }
     .stock-tile .code {
-        font-size: 1.15rem;
+        font-size: 0.86rem;
         font-weight: 700;
         color: #355782;
         line-height: 1;
@@ -401,10 +401,10 @@ def _stock_grid_cols(total: int) -> int:
     if total <= 4:
         return total
     if total <= 8:
-        return 4
-    if total <= 12:
         return 5
-    return 6
+    if total <= 12:
+        return 6
+    return 7
 
 
 grid_cols = _stock_grid_cols(len(rows))
@@ -425,17 +425,17 @@ for start in range(0, len(rows), grid_cols):
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button("查看", key=f"open_fast_{row['code']}", use_container_width=True, type="tertiary"):
-                st.session_state["fast_selected_code"] = row["code"]
-                st.session_state["fast_selected_name"] = row["name"]
-
-            del_row = st.columns([4, 1, 4])
-            with del_row[1]:
+            act_cols = st.columns([1, 1], vertical_alignment="center")
+            with act_cols[0]:
+                if st.button("选中", key=f"open_fast_{row['code']}", use_container_width=True, type="tertiary"):
+                    st.session_state["fast_selected_code"] = row["code"]
+                    st.session_state["fast_selected_name"] = row["name"]
+            with act_cols[1]:
                 st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
                 if st.button(
                     "🗑️",
                     key=f"mini_del_{row['code']}",
-                    use_container_width=False,
+                    use_container_width=True,
                     type="tertiary",
                     help=f"删除 {row['name']}",
                 ):
