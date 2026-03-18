@@ -236,8 +236,17 @@ styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
 st.dataframe(styled, width="stretch", hide_index=True)
 
 st.markdown('<div class="engine-divider"><span>快引擎子版面</span></div>', unsafe_allow_html=True)
-header_cols = st.columns([2, 1, 1])
-auto_refresh_sec = header_cols[1].number_input("自动刷新秒(0关闭)", min_value=0, max_value=300, value=0, step=1)
+header_cols = st.columns([3, 1, 1])
+header_cols[0].markdown("#### 观察标的")
+header_cols[1].markdown("自动刷新(秒)")
+auto_refresh_sec = header_cols[1].number_input(
+    "自动刷新(秒)",
+    min_value=0,
+    max_value=300,
+    value=0,
+    step=1,
+    label_visibility="collapsed",
+)
 if header_cols[2].button("刷新", use_container_width=True):
     st.rerun()
 if auto_refresh_sec > 0:
@@ -246,14 +255,20 @@ if auto_refresh_sec > 0:
         height=0,
     )
 
-for row in rows:
-    b1, b2 = st.columns([9, 1])
-    if b1.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
+btn_cols = st.columns(min(3, max(1, len(rows))))
+for idx, row in enumerate(rows):
+    col = btn_cols[idx % len(btn_cols)]
+    if col.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
         st.session_state["fast_selected_code"] = row["code"]
         st.session_state["fast_selected_name"] = row["name"]
-    if b2.button("删", key=f"del_fast_{row['code']}", use_container_width=True):
-        remove_stock_from_pool(row["code"])
-        if st.session_state.get("fast_selected_code") == row["code"]:
+
+with st.expander("管理观察池（删除）", expanded=False):
+    del_options = [f"{r['name']} ({r['code']})" for r in rows]
+    target_del = st.selectbox("选择要删除的股票", options=del_options, label_visibility="collapsed")
+    if st.button("删除选中股票", key="delete_selected_stock"):
+        del_code = target_del.split("(")[-1].rstrip(")")
+        remove_stock_from_pool(del_code)
+        if st.session_state.get("fast_selected_code") == del_code:
             st.session_state.pop("fast_selected_code", None)
             st.session_state.pop("fast_selected_name", None)
         st.rerun()
@@ -329,14 +344,18 @@ with left:
     else:
         chart_df = intraday_df.set_index("time")
         area_df = chart_df.reset_index()
+        # A股配色: 涨红跌绿, 平盘中性灰
+        area_color = "#ef4444" if (change_pct or 0) > 0 else ("#22c55e" if (change_pct or 0) < 0 else "#94a3b8")
         chart = (
             alt.Chart(area_df)
-            .mark_area(color="#22c55e", opacity=0.9)
+            .mark_area(color=area_color, opacity=0.9)
             .encode(
                 x=alt.X("time:T", title="time"),
                 y=alt.Y("volume_lot:Q", title="vol"),
             )
             .properties(height=330)
+            .configure_view(strokeOpacity=0)
+            .configure_axis(gridColor="#dbe4f0", labelColor="#4a5f7c", titleColor="#4a5f7c")
         )
         st.altair_chart(chart, use_container_width=True)
 
