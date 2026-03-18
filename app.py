@@ -3,7 +3,7 @@ import streamlit as st
 
 from fast_engine import fetch_realtime_quote
 from slow_engine import (
-    add_stock_to_pool,
+    add_stock_by_query,
     get_latest_fundamental_snapshot,
     get_stock_pool,
     init_db,
@@ -177,14 +177,17 @@ premium_warn_threshold = st.sidebar.number_input(
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("股票池管理")
-new_code = st.sidebar.text_input("新增股票代码", value="", placeholder="例如 600036")
-new_name = st.sidebar.text_input("新增股票名称", value="", placeholder="例如 招商银行")
+new_query = st.sidebar.text_input(
+    "新增股票（代码或名称）",
+    value="",
+    placeholder="例如 600036 或 招商银行",
+)
 
 if st.sidebar.button("添加到股票池并抓取数据"):
     try:
-        add_stock_to_pool(new_code, new_name)
-        update_fundamental_data([(new_code.strip(), new_name.strip())])
-        st.sidebar.success(f"已加入: {new_code.strip()} - {new_name.strip()}")
+        code, name = add_stock_by_query(new_query)
+        update_fundamental_data([(code, name)])
+        st.sidebar.success(f"已加入: {code} - {name}")
         st.rerun()
     except Exception as exc:
         st.sidebar.error(f"添加失败: {exc}")

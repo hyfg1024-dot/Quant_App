@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -99,6 +100,75 @@ def add_stock_to_pool(code: str, name: str) -> None:
             (normalized_code, normalized_name),
         )
         conn.commit()
+
+
+def _normalize_name(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(text))
+    return normalized.replace(" ", "").replace("\u3000", "").upper()
+
+
+def resolve_stock_identity(query: str) -> Tuple[str, str]:
+    init_db()
+    q = str(query).strip()
+    if not q:
+        raise ValueError("请输入股票代码或股票名称")
+
+    # 代码输入兼容: 600036 / sh600036 / sz000001
+    digits = "".join(ch for ch in q if ch.isdigit())
+    code_candidate = digits[-6:] if len(digits) >= 6 else ""
+
+    # 优先在本地库解析
+    with _connect() as conn:
+        if code_candidate and len(code_candidate) == 6:
+            row = conn.execute(
+                "SELECT code, name FROM stock_info WHERE code = ?",
+                (code_candidate,),
+            ).fetchone()
+            if row:
+                return str(row[0]), str(row[1])
+
+        row = conn.execute(
+            "SELECT code, name FROM stock_info WHERE name = ?",
+            (q,),
+        ).fetchone()
+        if row:
+            return str(row[0]), str(row[1])
+
+    # 再查 AkShare 全市场代码名称映射
+    try:
+        code_name_df = ak.stock_info_a_code_name()
+    except Exception as exc:
+        raise ValueError(f"无法解析股票信息，请稍后重试: {exc}")
+
+    code_name_df["code"] = code_name_df["code"].astype(str).str.strip()
+    code_name_df["name"] = code_name_df["name"].astype(str).str.strip()
+    code_name_df["name_norm"] = code_name_df["name"].map(_normalize_name)
+
+    if code_candidate and len(code_candidate) == 6:
+        matched = code_name_df[code_name_df["code"] == code_candidate]
+        if not matched.empty:
+            row = matched.iloc[0]
+            return str(row["code"]), str(row["name"])
+        raise ValueError(f"未找到代码为 {code_candidate} 的 A 股标的")
+
+    q_norm = _normalize_name(q)
+    matched_exact = code_name_df[code_name_df["name_norm"] == q_norm]
+    if not matched_exact.empty:
+        row = matched_exact.iloc[0]
+        return str(row["code"]), str(row["name"])
+
+    matched_contains = code_name_df[code_name_df["name_norm"].str.contains(q_norm, na=False)]
+    if not matched_contains.empty:
+        row = matched_contains.iloc[0]
+        return str(row["code"]), str(row["name"])
+
+    raise ValueError(f"未找到名称为 {q} 的 A 股标的")
+
+
+def add_stock_by_query(query: str) -> Tuple[str, str]:
+    code, name = resolve_stock_identity(query)
+    add_stock_to_pool(code, name)
+    return code, name
 
 
 def _fetch_pb_from_baidu(symbol: str) -> Optional[float]:
