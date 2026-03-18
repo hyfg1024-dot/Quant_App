@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import altair as alt
 import pandas as pd
@@ -64,6 +65,13 @@ st.markdown(
     [data-testid="stToggle"] label p,
     [data-testid="stSelectbox"] label p {
         color: #1f334f !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stCheckbox"] label p,
+    [data-testid="stCheckbox"] label span {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        opacity: 1 !important;
         font-weight: 700 !important;
     }
     div[data-testid="stToggle"] label,
@@ -288,6 +296,25 @@ def _json_safe(v):
         pass
     return v
 
+
+def _is_hk_code(code: str) -> bool:
+    digits = "".join(ch for ch in str(code).strip() if ch.isdigit())
+    return len(digits) == 5
+
+
+def _is_market_open(code: str) -> bool:
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    if now.weekday() >= 5:
+        return False
+
+    t = now.time()
+    if _is_hk_code(code):
+        # 港股常规交易时段（简化口径）
+        return (time(9, 30) <= t <= time(12, 0)) or (time(13, 0) <= t <= time(16, 0))
+
+    # A股常规交易时段
+    return (time(9, 30) <= t <= time(11, 30)) or (time(13, 0) <= t <= time(15, 0))
+
 snapshot_df["更新时间"] = snapshot_df["更新时间"].apply(_format_display_time)
 snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
@@ -307,20 +334,30 @@ styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
 )
 st.dataframe(styled, width="stretch", hide_index=True)
 
+if "fast_selected_code" not in st.session_state:
+    st.session_state["fast_selected_code"] = rows[0]["code"]
+    st.session_state["fast_selected_name"] = rows[0]["name"]
+
+selected_code_for_ctrl = st.session_state["fast_selected_code"]
+market_open_for_ctrl = _is_market_open(selected_code_for_ctrl)
+
 st.markdown('<div class="engine-divider"><span>快引擎子版面</span></div>', unsafe_allow_html=True)
 header_cols = st.columns([2.4, 0.8, 0.6, 0.9], vertical_alignment="bottom")
 header_cols[0].markdown("#### 观察标的")
-auto_refresh_on = header_cols[1].toggle("自动刷新", value=False, key="fast_auto_refresh_on")
+auto_refresh_on = header_cols[1].checkbox("自动刷新", value=False, key="fast_auto_refresh_on")
 auto_refresh_sec = header_cols[2].selectbox(
     "刷新间隔(秒)",
     options=[3, 5, 10, 15, 30, 60],
     index=2,
     key="fast_auto_refresh_sec",
 )
-if header_cols[3].button("立即刷新", use_container_width=True):
+if header_cols[3].button("立即刷新", use_container_width=True, disabled=not market_open_for_ctrl):
     st.rerun()
 if auto_refresh_on:
-    st.caption(f"快引擎已开启自动刷新：每 {auto_refresh_sec} 秒更新一次（局部刷新，不整页闪动）")
+    if market_open_for_ctrl:
+        st.caption(f"快引擎已开启自动刷新：每 {auto_refresh_sec} 秒更新一次（局部刷新，不整页闪动）")
+    else:
+        st.caption("当前闭市，自动刷新已暂停（不抓取新数据）。")
 else:
     st.caption("自动刷新已关闭")
 
@@ -352,12 +389,9 @@ with st.expander("管理观察池（删除）", expanded=False):
             st.session_state.pop("fast_selected_name", None)
         st.rerun()
 
-if "fast_selected_code" not in st.session_state:
-    st.session_state["fast_selected_code"] = rows[0]["code"]
-    st.session_state["fast_selected_name"] = rows[0]["name"]
-
-def _render_fast_panel(selected_code: str, selected_name: str):
-    panel = fetch_fast_panel(selected_code)
+def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
+    if panel is None:
+        panel = fetch_fast_panel(selected_code)
     quote = panel["quote"]
     ind = panel["indicators"]
     intraday_df = panel["intraday"]
@@ -579,9 +613,23 @@ def _render_fast_panel(selected_code: str, selected_name: str):
 def _render_fast_panel_fragment():
     selected_code = st.session_state.get("fast_selected_code", rows[0]["code"])
     selected_name = st.session_state.get("fast_selected_name", rows[0]["name"])
-    _render_fast_panel(selected_code, selected_name)
+    market_open = _is_market_open(selected_code)
+    cache_key = f"fast_panel_cache_{selected_code}"
 
-if auto_refresh_on:
+    panel = None
+    if market_open:
+        panel = fetch_fast_panel(selected_code)
+        st.session_state[cache_key] = panel
+    else:
+        panel = st.session_state.get(cache_key)
+        if panel is None:
+            st.info("当前为闭市时段，暂无开市缓存快照。")
+            return
+        st.info("当前为闭市时段，展示上次开市缓存数据。")
+
+    _render_fast_panel(selected_code, selected_name, panel=panel)
+
+if auto_refresh_on and market_open_for_ctrl:
     @st.fragment(run_every=f"{int(auto_refresh_sec)}s")
     def _auto_fast_panel_fragment():
         _render_fast_panel_fragment()
