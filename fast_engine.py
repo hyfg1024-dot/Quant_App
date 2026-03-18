@@ -112,6 +112,15 @@ def _parse_tencent_fields(symbol: str, fields: List[str]) -> Dict:
         ask_price = _to_float(fields[19 + i * 2])
         ask_vol = _to_float(fields[20 + i * 2])
 
+        if bid_price is not None and bid_price <= 0:
+            bid_price = None
+        if ask_price is not None and ask_price <= 0:
+            ask_price = None
+        if bid_vol is not None and bid_vol <= 0:
+            bid_vol = None
+        if ask_vol is not None and ask_vol <= 0:
+            ask_vol = None
+
         bids_5.append({"level": i + 1, "price": bid_price, "volume_lot": bid_vol})
         asks_5.append({"level": i + 1, "price": ask_price, "volume_lot": ask_vol})
 
@@ -313,14 +322,27 @@ def fetch_fast_panel(symbol: str) -> Dict:
     if quote.get("error"):
         errors.append(f"quote: {quote['error']}")
 
+    ob5 = quote.get("order_book_5", {"buy": [], "sell": []})
+    non_null_levels = 0
+    for side in ("buy", "sell"):
+        for row in ob5.get(side, []):
+            if row.get("price") is not None and row.get("volume_lot") is not None:
+                non_null_levels += 1
+
+    exchange = _resolve_exchange(symbol)
+    if exchange == "hk" and non_null_levels <= 2:
+        depth_note = "港股免费接口通常仅稳定提供买1/卖1，买2-买5与卖2-卖5可能为空。"
+    else:
+        depth_note = "当前使用公开免费接口的买5卖5盘口数据。"
+
     return {
         "symbol": symbol,
         "quote": quote,
         "indicators": indicators,
         "intraday": intraday_df,
-        "order_book_5": quote.get("order_book_5", {"buy": [], "sell": []}),
+        "order_book_5": ob5,
         "order_book_10": quote.get("order_book_10", {"buy": [], "sell": []}),
-        "depth_note": "当前使用公开免费接口的买5卖5盘口数据。",
+        "depth_note": depth_note,
         "error": " | ".join(errors) if errors else None,
     }
 
