@@ -169,6 +169,9 @@ st.markdown(
         margin: 0 0 0.5rem 0;
         letter-spacing: 0.2px;
     }
+    .fast-panels-gap {
+        height: 0.75rem;
+    }
     .ob-block { margin-top: 0.3rem; }
     .ob-row {
         display: grid;
@@ -619,6 +622,7 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
         unsafe_allow_html=True,
     )
 
+    st.markdown('<div class="fast-panels-gap"></div>', unsafe_allow_html=True)
     left, right = st.columns([2, 1], vertical_alignment="top")
     with left:
         st.markdown('<div class="panel-title">资金分时</div>', unsafe_allow_html=True)
