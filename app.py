@@ -291,7 +291,18 @@ if panel.get("error") and not quote.get("current_price"):
     st.stop()
 
 price_now = quote.get("current_price")
-change_pct = quote.get("change_pct")
+prev_close_for_pct = quote.get("prev_close")
+api_change_pct = quote.get("change_pct")
+calc_change_pct = None
+if (
+    price_now is not None
+    and prev_close_for_pct is not None
+    and prev_close_for_pct > 0
+):
+    calc_change_pct = (price_now - prev_close_for_pct) / prev_close_for_pct * 100
+
+# 以现价/昨收重算为主，避免接口涨跌幅字段偶发异常导致颜色反向
+change_pct = calc_change_pct if calc_change_pct is not None else api_change_pct
 is_down = change_pct is not None and change_pct < 0
 price_class = "a-down" if is_down else "a-up"
 if price_now is not None:
