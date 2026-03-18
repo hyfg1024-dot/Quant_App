@@ -9,19 +9,77 @@ st.set_page_config(page_title="Defensive Quant Dashboard", page_icon="📊", lay
 st.markdown(
     """
     <style>
+    :root {
+        --bg-main: #edf3fa;
+        --bg-panel: #f6f9ff;
+        --text-strong: #15253f;
+        --text-normal: #1f334f;
+        --text-muted: #536985;
+        --line-soft: #c8d5e6;
+        --accent: #1d4ed8;
+    }
     .stApp {
-        background: linear-gradient(180deg, #f5f9ff 0%, #ecf2fb 100%);
-        color: #1e293b;
+        background: linear-gradient(180deg, var(--bg-main) 0%, #e8eff8 100%);
+        color: var(--text-normal);
+    }
+    [data-testid="stAppViewContainer"] {
+        color: var(--text-normal);
+    }
+    [data-testid="stSidebar"] {
+        background: #1e2432;
+        color: #e8eef8;
+    }
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span {
+        color: #e8eef8 !important;
     }
     .block-container {
         padding-top: 1.5rem;
         max-width: 1100px;
     }
-    .panel {
-        background: #f0f6ff;
-        border: 1px solid #c9d9ee;
-        border-radius: 10px;
-        padding: 0.8rem 1rem;
+    h1, h2, h3, h4 {
+        color: var(--text-strong) !important;
+    }
+    p, label, div, span {
+        color: var(--text-normal);
+    }
+    [data-testid="stCaptionContainer"] p {
+        color: var(--text-muted) !important;
+    }
+    [data-testid="stMetricLabel"] div {
+        color: var(--text-muted) !important;
+    }
+    [data-testid="stMetricValue"] div {
+        color: var(--text-strong) !important;
+    }
+    [data-testid="stMarkdownContainer"] p {
+        color: var(--text-normal);
+    }
+    .stButton > button {
+        background: #dbeafe;
+        color: #0f2a52;
+        border: 1px solid #a8c2e8;
+        font-weight: 600;
+    }
+    .stButton > button:hover {
+        background: #c7ddfb;
+        color: #0b2346;
+        border-color: #8fb3e3;
+    }
+    [data-testid="stSelectbox"] * {
+        color: var(--text-strong) !important;
+    }
+    [data-testid="stCheckbox"] label span {
+        color: var(--text-normal) !important;
+    }
+    [data-testid="stAlertContentInfo"] p,
+    [data-testid="stAlertContentSuccess"] p,
+    [data-testid="stAlertContentWarning"] p {
+        color: #12345c !important;
     }
     .warn-box {
         background: #fff1e8;
@@ -77,6 +135,7 @@ if not rows:
 snapshot_df = pd.DataFrame(rows)
 snapshot_df = snapshot_df[["code", "name", "trade_date", "pe", "pb", "dividend_yield", "created_at"]]
 snapshot_df.columns = ["代码", "名称", "日期", "PE", "PB", "股息率", "更新时间"]
+snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
 st.subheader("股票池（慢引擎快照）")
 
@@ -92,7 +151,10 @@ def _highlight_defensive(row):
 styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
     {"PE": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}"}, na_rep="N/A"
 )
-st.dataframe(styled, use_container_width=True, hide_index=True)
+st.dataframe(styled, width="stretch", hide_index=True)
+
+if snapshot_df["股息率"].isna().all():
+    st.warning("当前股息率字段源站返回缺失，已按防御模式继续展示，建议盘后再次刷新。")
 
 options = [f"{r['code']} - {r['name']}" for r in rows]
 selected = st.selectbox("选择标的查看快引擎", options=options)

@@ -151,6 +151,23 @@ def fetch_latest_fundamental(symbol: str, default_name: str = "") -> Dict:
 
 def save_fundamental(record: Dict) -> None:
     with _connect() as conn:
+        cur = conn.cursor()
+        for field in ("pe", "pb", "dividend_yield"):
+            if record.get(field) is None:
+                cur.execute(
+                    f"""
+                    SELECT {field}
+                    FROM fundamental_data
+                    WHERE code = ? AND {field} IS NOT NULL
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (record["code"],),
+                )
+                row = cur.fetchone()
+                if row:
+                    record[field] = row[0]
+
         conn.execute(
             """
             INSERT INTO fundamental_data(
