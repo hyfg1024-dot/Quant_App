@@ -364,13 +364,14 @@ else:
 btn_rows = st.columns(min(3, max(1, len(rows))))
 for idx, row in enumerate(rows):
     col = btn_rows[idx % len(btn_rows)]
-    open_col, del_col = col.columns([8, 1], vertical_alignment="center")
-    if open_col.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
+    if col.button(f"{row['name']} ({row['code']})", key=f"open_fast_{row['code']}", use_container_width=True):
         st.session_state["fast_selected_code"] = row["code"]
         st.session_state["fast_selected_name"] = row["name"]
-    with del_col:
+
+    del_row = col.columns([3, 2, 3])
+    with del_row[1]:
         st.markdown('<div class="mini-del-wrap">', unsafe_allow_html=True)
-        if st.button("🗑", key=f"mini_del_{row['code']}", use_container_width=True, help=f"删除 {row['name']}"):
+        if st.button("回收站", key=f"mini_del_{row['code']}", use_container_width=True, help=f"删除 {row['name']}"):
             remove_stock_from_pool(row["code"])
             if st.session_state.get("fast_selected_code") == row["code"]:
                 st.session_state.pop("fast_selected_code", None)
