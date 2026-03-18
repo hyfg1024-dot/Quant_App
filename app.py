@@ -353,10 +353,6 @@ def _is_market_open(code: str) -> bool:
     return (time(9, 30) <= t <= time(11, 30)) or (time(13, 0) <= t <= time(15, 0))
 
 
-@st.dialog("JSON 预览", width="large")
-def _show_json_dialog(payload_text: str):
-    st.code(payload_text, language="json")
-
 snapshot_df["更新时间"] = snapshot_df["更新时间"].apply(_format_display_time)
 snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
 
@@ -521,36 +517,31 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
     export_json = json.dumps(_json_safe(export_payload), ensure_ascii=False, indent=2)
 
     js_text = json.dumps(export_json, ensure_ascii=False)
-    btn_cols = st.columns([1, 1, 5], vertical_alignment="center")
-    with btn_cols[0]:
-        html(
-            f"""
-            <div style="margin:0.15rem 0 0.35rem 0;">
-              <button id="copy-json-btn-{selected_code}"
-                style="width:100%;height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
-                复制JSON
-              </button>
-              <div id="copy-json-msg-{selected_code}" style="margin-top:0.45rem;color:#2e4b6e;font-size:0.92rem;"></div>
-            </div>
-            <script>
-              const btn = document.getElementById("copy-json-btn-{selected_code}");
-              const msg = document.getElementById("copy-json-msg-{selected_code}");
-              const text = {js_text};
-              btn.onclick = async function () {{
-                try {{
-                  await navigator.clipboard.writeText(text);
-                  msg.textContent = "已复制";
-                }} catch (e) {{
-                  msg.textContent = "复制失败，请重试";
-                }}
-              }};
-            </script>
-            """,
-            height=78,
-        )
-    with btn_cols[1]:
-        if st.button("JSON预览", key=f"json_preview_btn_{selected_code}", use_container_width=True):
-            _show_json_dialog(export_json)
+    html(
+        f"""
+        <div style="margin:0.15rem 0 0.35rem 0;max-width:220px;">
+          <button id="copy-json-btn-{selected_code}"
+            style="width:100%;height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+            复制JSON
+          </button>
+          <div id="copy-json-msg-{selected_code}" style="margin-top:0.45rem;color:#2e4b6e;font-size:0.92rem;"></div>
+        </div>
+        <script>
+          const btn = document.getElementById("copy-json-btn-{selected_code}");
+          const msg = document.getElementById("copy-json-msg-{selected_code}");
+          const text = {js_text};
+          btn.onclick = async function () {{
+            try {{
+              await navigator.clipboard.writeText(text);
+              msg.textContent = "已复制";
+            }} catch (e) {{
+              msg.textContent = "复制失败，请重试";
+            }}
+          }};
+        </script>
+        """,
+        height=78,
+    )
 
     def _fmt(v, nd=2):
         return "N/A" if v is None else f"{v:.{nd}f}"
