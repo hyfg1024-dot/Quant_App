@@ -11,7 +11,7 @@ from fast_engine import fetch_fast_panel
 from slow_engine import (
     add_stock_by_query,
     get_latest_fundamental_snapshot,
-    get_stock_pool,
+    get_stock_group_map,
     init_db,
     remove_stock_from_pool,
     update_fundamental_data,
@@ -43,6 +43,17 @@ st.markdown(
     [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span {
         color: #e8eef8 !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:not([kind="tertiary"]),
+    [data-testid="stSidebar"] .stButton > button:not([kind="tertiary"]) * {
+        background: #dbeafe !important;
+        color: #0f2a52 !important;
+        border: 1px solid #a8c2e8 !important;
+    }
+    [data-testid="stSidebar"] .stButton > button:not([kind="tertiary"]):hover,
+    [data-testid="stSidebar"] .stButton > button:not([kind="tertiary"]):hover * {
+        background: #c7ddfb !important;
+        color: #0b2346 !important;
     }
     h1, h2, h3, h4 { color: var(--text-strong) !important; }
     .stButton > button:not([kind="tertiary"]) {
@@ -245,6 +256,12 @@ st.markdown(
         border: none !important;
         box-shadow: none !important;
     }
+    .watch-split-divider {
+        min-height: 360px;
+        border-left: 2px solid #c7d3e3;
+        margin: 0.2rem auto 0 auto;
+        width: 1px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -268,17 +285,20 @@ st.sidebar.subheader("股票池管理")
 new_query = st.sidebar.text_input(
     "新增股票（代码或名称）", value="", placeholder="例如 600036 / 00700 / 腾讯控股"
 )
-if st.sidebar.button("添加到股票池并抓取数据"):
+
+add_cols = st.sidebar.columns(2)
+add_holding = add_cols[0].button("加入持仓", use_container_width=True)
+add_watch = add_cols[1].button("加入观察", use_container_width=True)
+if add_holding or add_watch:
+    pool_group = "holding" if add_holding else "watch"
+    group_text = "持仓" if pool_group == "holding" else "观察"
     try:
-        code, name = add_stock_by_query(new_query)
+        code, name = add_stock_by_query(new_query, pool_group=pool_group)
         update_fundamental_data([(code, name)])
-        st.sidebar.success(f"已加入: {code} - {name}")
+        st.sidebar.success(f"已加入{group_text}: {code} - {name}")
         st.rerun()
     except Exception as exc:
         st.sidebar.error(f"添加失败: {exc}")
-
-pool_rows = get_stock_pool()
-st.sidebar.caption("当前股票池: " + "、".join([f"{c}-{n}" for c, n in pool_rows]))
 
 if st.button("刷新慢引擎数据"):
     with st.spinner("正在更新慢引擎数据..."):
@@ -399,51 +419,70 @@ if auto_refresh_on:
 else:
     st.caption("自动刷新已关闭")
 
+group_map = get_stock_group_map()
+holding_rows = [r for r in rows if group_map.get(str(r["code"]), "watch") == "holding"]
+watch_rows = [r for r in rows if group_map.get(str(r["code"]), "watch") != "holding"]
+
+
 def _stock_grid_cols(total: int) -> int:
-    if total <= 4:
-        return total
-    if total <= 8:
-        return 5
-    if total <= 12:
-        return 6
-    return 7
+    if total <= 1:
+        return 1
+    if total <= 6:
+        return 2
+    return 3
 
 
-grid_cols = _stock_grid_cols(len(rows))
-for start in range(0, len(rows), grid_cols):
-    row_cols = st.columns(grid_cols)
-    chunk = rows[start : start + grid_cols]
-    for idx, row in enumerate(chunk):
-        col = row_cols[idx]
-        with col:
-            st.markdown('<div class="stock-item-frame">', unsafe_allow_html=True)
-            open_col, del_col = st.columns([5.2, 1], vertical_alignment="center")
-            with open_col:
-                st.markdown('<div class="stock-open-wrap">', unsafe_allow_html=True)
-                if st.button(
-                    f"{row['name']}\n{row['code']}",
-                    key=f"open_fast_{row['code']}",
-                    use_container_width=True,
-                ):
-                    st.session_state["fast_selected_code"] = row["code"]
-                    st.session_state["fast_selected_name"] = row["name"]
+def _render_stock_group(stock_rows, group_key_prefix: str) -> None:
+    if not stock_rows:
+        st.caption("暂无标的")
+        return
+
+    grid_cols = _stock_grid_cols(len(stock_rows))
+    for start in range(0, len(stock_rows), grid_cols):
+        row_cols = st.columns(grid_cols)
+        chunk = stock_rows[start : start + grid_cols]
+        for idx, row in enumerate(chunk):
+            col = row_cols[idx]
+            with col:
+                st.markdown('<div class="stock-item-frame">', unsafe_allow_html=True)
+                open_col, del_col = st.columns([5.2, 1], vertical_alignment="center")
+                with open_col:
+                    st.markdown('<div class="stock-open-wrap">', unsafe_allow_html=True)
+                    if st.button(
+                        f"{row['name']}\n{row['code']}",
+                        key=f"open_fast_{group_key_prefix}_{row['code']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["fast_selected_code"] = row["code"]
+                        st.session_state["fast_selected_name"] = row["name"]
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with del_col:
+                    st.markdown('<div class="stock-del-inline-wrap">', unsafe_allow_html=True)
+                    if st.button(
+                        "🗑️",
+                        key=f"mini_del_{group_key_prefix}_{row['code']}",
+                        use_container_width=True,
+                        type="tertiary",
+                        help=f"删除 {row['name']}",
+                    ):
+                        remove_stock_from_pool(row["code"])
+                        if st.session_state.get("fast_selected_code") == row["code"]:
+                            st.session_state.pop("fast_selected_code", None)
+                            st.session_state.pop("fast_selected_name", None)
+                        st.rerun()
+                    st.markdown("</div>", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
-            with del_col:
-                st.markdown('<div class="stock-del-inline-wrap">', unsafe_allow_html=True)
-                if st.button(
-                    "🗑️",
-                    key=f"mini_del_{row['code']}",
-                    use_container_width=True,
-                    type="tertiary",
-                    help=f"删除 {row['name']}",
-                ):
-                    remove_stock_from_pool(row["code"])
-                    if st.session_state.get("fast_selected_code") == row["code"]:
-                        st.session_state.pop("fast_selected_code", None)
-                        st.session_state.pop("fast_selected_name", None)
-                    st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+
+
+group_cols = st.columns([1, 0.03, 1], vertical_alignment="top")
+with group_cols[0]:
+    st.markdown("##### 持仓")
+    _render_stock_group(holding_rows, "holding")
+with group_cols[1]:
+    st.markdown('<div class="watch-split-divider"></div>', unsafe_allow_html=True)
+with group_cols[2]:
+    st.markdown("##### 观察")
+    _render_stock_group(watch_rows, "watch")
 
 with st.expander("管理观察池（删除）", expanded=False):
     del_options = [f"{r['name']} ({r['code']})" for r in rows]

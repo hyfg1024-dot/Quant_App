@@ -54,6 +54,10 @@ def _is_hk_symbol(symbol: str) -> bool:
     return s.isdigit() and len(s) == 5
 
 
+def _normalize_pool_group(pool_group: Optional[str]) -> str:
+    return "holding" if str(pool_group).strip().lower() == "holding" else "watch"
+
+
 def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(DB_PATH)
@@ -65,7 +69,8 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS stock_info (
                 code TEXT PRIMARY KEY,
-                name TEXT NOT NULL
+                name TEXT NOT NULL,
+                pool_group TEXT NOT NULL DEFAULT 'watch'
             )
             """
         )
@@ -86,6 +91,13 @@ def init_db() -> None:
             )
             """
         )
+        stock_info_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(stock_info)").fetchall()
+        }
+        if "pool_group" not in stock_info_cols:
+            conn.execute("ALTER TABLE stock_info ADD COLUMN pool_group TEXT NOT NULL DEFAULT 'watch'")
+            conn.execute("UPDATE stock_info SET pool_group = 'watch' WHERE pool_group IS NULL OR TRIM(pool_group) = ''")
+
         existing_cols = {
             row[1] for row in conn.execute("PRAGMA table_info(fundamental_data)").fetchall()
         }
@@ -97,29 +109,61 @@ def init_db() -> None:
 
 
 def upsert_stock_pool(stock_pool: List[Tuple[str, str]] = STOCK_POOL) -> None:
+    records: List[Tuple[str, str, str]] = []
+    for item in stock_pool:
+        if len(item) < 2:
+            continue
+        code = str(item[0]).strip()
+        name = str(item[1]).strip()
+        pool_group = _normalize_pool_group(item[2] if len(item) >= 3 else "watch")
+        if code and name:
+            records.append((code, name, pool_group))
+
+    if not records:
+        return
+
     with _connect() as conn:
         conn.executemany(
-            "INSERT OR REPLACE INTO stock_info(code, name) VALUES (?, ?)",
-            stock_pool,
+            "INSERT OR REPLACE INTO stock_info(code, name, pool_group) VALUES (?, ?, ?)",
+            records,
         )
         conn.commit()
 
 
-def get_stock_pool() -> List[Tuple[str, str]]:
+def get_stock_pool(pool_group: Optional[str] = None) -> List[Tuple[str, str]]:
     init_db()
+    where_sql = ""
+    params: Tuple = tuple()
+    if pool_group is not None:
+        where_sql = " WHERE pool_group = ?"
+        params = (_normalize_pool_group(pool_group),)
+
     with _connect() as conn:
-        cur = conn.execute("SELECT code, name FROM stock_info ORDER BY code")
+        cur = conn.execute(
+            f"SELECT code, name FROM stock_info{where_sql} ORDER BY code",
+            params,
+        )
         rows = cur.fetchall()
         if rows:
             return [(str(row[0]), str(row[1])) for row in rows]
+        if pool_group is not None:
+            return []
 
     upsert_stock_pool(STOCK_POOL)
     return STOCK_POOL.copy()
 
 
-def add_stock_to_pool(code: str, name: str) -> None:
+def get_stock_group_map() -> Dict[str, str]:
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute("SELECT code, pool_group FROM stock_info")
+        return {str(code): _normalize_pool_group(pool_group) for code, pool_group in cur.fetchall()}
+
+
+def add_stock_to_pool(code: str, name: str, pool_group: str = "watch") -> None:
     normalized_code = str(code).strip()
     normalized_name = str(name).strip()
+    normalized_group = _normalize_pool_group(pool_group)
     if not normalized_code.isdigit() or len(normalized_code) not in {5, 6}:
         raise ValueError("股票代码必须是 5 位(港股)或 6 位(A股)数字")
     if not normalized_name:
@@ -128,8 +172,8 @@ def add_stock_to_pool(code: str, name: str) -> None:
     init_db()
     with _connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO stock_info(code, name) VALUES (?, ?)",
-            (normalized_code, normalized_name),
+            "INSERT OR REPLACE INTO stock_info(code, name, pool_group) VALUES (?, ?, ?)",
+            (normalized_code, normalized_name, normalized_group),
         )
         conn.commit()
 
@@ -237,9 +281,9 @@ def resolve_stock_identity(query: str) -> Tuple[str, str]:
     raise ValueError(f"未找到名称为 {q} 的A股/港股标的")
 
 
-def add_stock_by_query(query: str) -> Tuple[str, str]:
+def add_stock_by_query(query: str, pool_group: str = "watch") -> Tuple[str, str]:
     code, name = resolve_stock_identity(query)
-    add_stock_to_pool(code, name)
+    add_stock_to_pool(code, name, pool_group=pool_group)
     return code, name
 
 
