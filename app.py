@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
@@ -261,7 +262,7 @@ st.markdown(
         box-shadow: none !important;
     }
     .watch-split-divider {
-        min-height: 360px;
+        min-height: 0;
         border-left: 2px solid #c7d3e3;
         margin: 0.2rem auto 0 auto;
         width: 1px;
@@ -476,12 +477,19 @@ def _render_stock_group(stock_rows, group_key_prefix: str) -> None:
                     st.markdown("</div>", unsafe_allow_html=True)
 
 
-group_cols = st.columns([1, 0.03, 1], vertical_alignment="top")
+holding_rows_needed = math.ceil(len(holding_rows) / max(_stock_grid_cols(len(holding_rows)), 1)) if holding_rows else 1
+watch_rows_needed = math.ceil(len(watch_rows) / max(_stock_grid_cols(len(watch_rows)), 1)) if watch_rows else 1
+divider_height = max(110, max(holding_rows_needed, watch_rows_needed) * 94 + 16)
+
+group_cols = st.columns([1, 0.02, 1], vertical_alignment="top")
 with group_cols[0]:
     st.markdown("##### 持仓")
     _render_stock_group(holding_rows, "holding")
 with group_cols[1]:
-    st.markdown('<div class="watch-split-divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="watch-split-divider" style="height:{divider_height}px;"></div>',
+        unsafe_allow_html=True,
+    )
 with group_cols[2]:
     st.markdown("##### 观察")
     _render_stock_group(watch_rows, "watch")
@@ -509,35 +517,6 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
         st.warning(f"快引擎数据拉取失败: {panel['error']}")
         return
 
-    price_now = quote.get("current_price")
-    prev_close_for_pct = quote.get("prev_close")
-    api_change_pct = quote.get("change_pct")
-    calc_change_pct = None
-    if (
-        price_now is not None
-        and prev_close_for_pct is not None
-        and prev_close_for_pct > 0
-    ):
-        calc_change_pct = (price_now - prev_close_for_pct) / prev_close_for_pct * 100
-
-    # 以现价/昨收重算为主，避免接口涨跌幅字段偶发异常导致颜色反向
-    change_pct = calc_change_pct if calc_change_pct is not None else api_change_pct
-    is_down = change_pct is not None and change_pct < 0
-    price_class = "a-down" if is_down else "a-up"
-    if price_now is not None:
-        st.markdown(
-            f"""
-            <div class="fast-head-title">{selected_name} ({selected_code})</div>
-            <div class="fast-price-line">
-                <span class="price-num {price_class}">{price_now:.2f}</span>
-                <span class="chg-num {price_class}">{(change_pct or 0):+.2f}%</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        q_time = _format_display_time(quote.get("quote_time"))
-        st.caption(f"更新时间: {q_time if q_time else 'N/A'}")
-
     selected_slow = next((r for r in rows if str(r.get("code")) == str(selected_code)), {})
     export_payload = {
         "meta": {
@@ -556,33 +535,65 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
         },
     }
     export_json = json.dumps(_json_safe(export_payload), ensure_ascii=False, indent=2)
-
     js_text = json.dumps(export_json, ensure_ascii=False)
-    html(
-        f"""
-        <div style="margin:0.15rem 0 0.35rem 0;max-width:220px;">
-          <button id="copy-json-btn-{selected_code}"
-            style="width:100%;height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
-            复制JSON
-          </button>
-          <div id="copy-json-msg-{selected_code}" style="margin-top:0.45rem;color:#2e4b6e;font-size:0.92rem;"></div>
-        </div>
-        <script>
-          const btn = document.getElementById("copy-json-btn-{selected_code}");
-          const msg = document.getElementById("copy-json-msg-{selected_code}");
-          const text = {js_text};
-          btn.onclick = async function () {{
-            try {{
-              await navigator.clipboard.writeText(text);
-              msg.textContent = "已复制";
-            }} catch (e) {{
-              msg.textContent = "复制失败，请重试";
-            }}
-          }};
-        </script>
-        """,
-        height=78,
-    )
+
+    price_now = quote.get("current_price")
+    prev_close_for_pct = quote.get("prev_close")
+    api_change_pct = quote.get("change_pct")
+    calc_change_pct = None
+    if (
+        price_now is not None
+        and prev_close_for_pct is not None
+        and prev_close_for_pct > 0
+    ):
+        calc_change_pct = (price_now - prev_close_for_pct) / prev_close_for_pct * 100
+
+    # 以现价/昨收重算为主，避免接口涨跌幅字段偶发异常导致颜色反向
+    change_pct = calc_change_pct if calc_change_pct is not None else api_change_pct
+    is_down = change_pct is not None and change_pct < 0
+    price_class = "a-down" if is_down else "a-up"
+
+    head_left, head_right = st.columns([3.2, 1], vertical_alignment="center")
+    if price_now is not None:
+        with head_left:
+            st.markdown(
+                f"""
+                <div class="fast-head-title">{selected_name} ({selected_code})</div>
+                <div class="fast-price-line">
+                    <span class="price-num {price_class}">{price_now:.2f}</span>
+                    <span class="chg-num {price_class}">{(change_pct or 0):+.2f}%</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            q_time = _format_display_time(quote.get("quote_time"))
+            st.caption(f"更新时间: {q_time if q_time else 'N/A'}")
+    with head_right:
+        html(
+            f"""
+            <div style="margin:1.05rem 0 0 0;">
+              <button id="copy-json-btn-{selected_code}"
+                style="width:100%;height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+                复制JSON
+              </button>
+              <div id="copy-json-msg-{selected_code}" style="margin-top:0.35rem;color:#2e4b6e;font-size:0.88rem;"></div>
+            </div>
+            <script>
+              const btn = document.getElementById("copy-json-btn-{selected_code}");
+              const msg = document.getElementById("copy-json-msg-{selected_code}");
+              const text = {js_text};
+              btn.onclick = async function () {{
+                try {{
+                  await navigator.clipboard.writeText(text);
+                  msg.textContent = "已复制";
+                }} catch (e) {{
+                  msg.textContent = "复制失败，请重试";
+                }}
+              }};
+            </script>
+            """,
+            height=90,
+        )
 
     def _fmt(v, nd=2):
         return "N/A" if v is None else f"{v:.{nd}f}"
