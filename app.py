@@ -416,40 +416,63 @@ def _render_fast_panel(selected_code: str, selected_name: str):
     export_json = json.dumps(_json_safe(export_payload), ensure_ascii=False, indent=2)
 
     js_text = json.dumps(export_json, ensure_ascii=False)
-    btn_row = st.columns([1, 1, 6])
-    with btn_row[0]:
-        html(
+    preview_html = (
+        export_json.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    html(
         f"""
-        <div style="margin: 0.2rem 0 0.4rem 0;">
+        <div style="margin: 0.15rem 0 0.35rem 0;">
+          <div style="display:flex;align-items:center;gap:10px;">
           <button id="copy-json-btn-{selected_code}"
-            style="display:inline-block;width:auto;max-width:320px;padding:0.45rem 0.9rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+            style="height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
             复制该股票JSON
           </button>
-          <div id="copy-json-msg-{selected_code}" style="margin-top:0.5rem;color:#2e4b6e;font-size:0.95rem;"></div>
+          <button id="preview-json-btn-{selected_code}"
+            style="height:44px;padding:0 0.95rem;border-radius:10px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:1.05rem;font-weight:700;cursor:pointer;white-space:nowrap;">
+            JSON预览
+          </button>
+          </div>
+          <div id="copy-json-msg-{selected_code}" style="margin-top:0.45rem;color:#2e4b6e;font-size:0.92rem;"></div>
+          <pre id="json-preview-box-{selected_code}" style="display:none;margin-top:0.5rem;padding:0.6rem;border-radius:8px;border:1px solid #b8cdea;background:#f7fbff;max-height:260px;overflow:auto;font-size:12px;line-height:1.35;">{preview_html}</pre>
         </div>
         <script>
           const btn = document.getElementById("copy-json-btn-{selected_code}");
+          const previewBtn = document.getElementById("preview-json-btn-{selected_code}");
+          const box = document.getElementById("json-preview-box-{selected_code}");
           const msg = document.getElementById("copy-json-msg-{selected_code}");
           const text = {js_text};
+          const frame = window.frameElement;
+
+          function resizeFrame() {{
+            if (frame) {{
+              frame.style.height = (document.body.scrollHeight + 10) + "px";
+            }}
+          }}
 
           btn.onclick = async function () {{
             try {{
               await navigator.clipboard.writeText(text);
               msg.textContent = "已复制到剪贴板，可直接粘贴给其他 AI。";
             }} catch (e) {{
-              msg.textContent = "浏览器限制复制，请点右侧 JSON预览 后手动复制。";
+              msg.textContent = "浏览器限制复制，请点 JSON预览 后手动复制。";
             }}
+            resizeFrame();
           }};
+
+          previewBtn.onclick = function () {{
+            const opening = box.style.display === "none";
+            box.style.display = opening ? "block" : "none";
+            previewBtn.textContent = opening ? "收起预览" : "JSON预览";
+            resizeFrame();
+          }};
+
+          resizeFrame();
         </script>
         """,
-        height=95,
+        height=78,
     )
-    preview_key = f"show_json_preview_{selected_code}"
-    with btn_row[1]:
-        if st.button("JSON预览", key=f"preview_btn_{selected_code}", use_container_width=False):
-            st.session_state[preview_key] = not st.session_state.get(preview_key, False)
-    if st.session_state.get(preview_key, False):
-        st.code(export_json, language="json")
 
     def _fmt(v, nd=2):
         return "N/A" if v is None else f"{v:.{nd}f}"
