@@ -42,6 +42,13 @@ streamlit run app.py
 
 浏览器打开终端显示的本地地址（通常是 `http://localhost:8501`）。
 
+### 4. （推荐）生成桌面一键启动按钮
+```bash
+./create_desktop_launcher.command
+```
+
+执行后，桌面会出现 `启动股票观察面板.command`，双击即可启动。
+
 ## 使用说明（30秒）
 - 左侧输入股票代码或名称，点 `持仓` / `观察`
 - 页面上方是 `基本面`
