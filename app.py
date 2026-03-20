@@ -328,8 +328,21 @@ if not rows:
     st.stop()
 
 snapshot_df = pd.DataFrame(rows)
-snapshot_df = snapshot_df[["code", "name", "trade_date", "pe", "pb", "dividend_yield", "created_at"]]
-snapshot_df.columns = ["代码", "名称", "日期", "PE(TTM)", "PB", "股息率", "更新时间"]
+snapshot_df = snapshot_df[
+    [
+        "code",
+        "name",
+        "trade_date",
+        "pe_dynamic",
+        "pe_static",
+        "pe_rolling",
+        "pb",
+        "dividend_yield",
+        "boll_index",
+        "created_at",
+    ]
+]
+snapshot_df.columns = ["代码", "名称", "日期", "PE(动)", "PE(静)", "PE(滚)", "PB", "股息率", "布林指数", "更新时间"]
 
 def _format_display_time(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -405,7 +418,8 @@ def _highlight_defensive(row):
     return ["background-color: #dcecff; color: #0f172a" if cond else "" for _ in row]
 
 styled = snapshot_df.style.apply(_highlight_defensive, axis=1).format(
-    {"PE(TTM)": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}"}, na_rep="N/A"
+    {"PE(动)": "{:.2f}", "PE(静)": "{:.2f}", "PE(滚)": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}", "布林指数": "{:.2f}"},
+    na_rep="N/A",
 )
 st.dataframe(styled, width="stretch", hide_index=True)
 
