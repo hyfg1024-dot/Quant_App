@@ -1,12 +1,16 @@
-# 股票观察面板
+# Quant App（交易模块专仓）
 
-`Quant_App` 为当前主线版本（含 DeepSeek 分析功能）。
+`Quant_App` 现在定位为交易指标分析模块专仓（快引擎 + DeepSeek 分析）。
 
 ## 功能
 - 基本面（慢引擎）：SQLite + AkShare
 - 交易面（快引擎）：实时行情、分时、买5卖5、VWAP
 - 复制 JSON
 - DeepSeek 分析窗口（快筛 / 深析 / 触发）
+
+## 仓库关系
+- 本仓库：交易模块维护线（`v1.x`）
+- 模块化总仓：`Quant_System`（本地目录：`/Users/wellthen/Desktop/TEST/Quant_System`）
 
 ## 目录入口
 - 主程序：`app.py`
