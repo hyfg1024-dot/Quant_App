@@ -1,0 +1,10 @@
+.DS_Store
+venv/
+data/*.db
+data/local_user_prefs.json
+data/deepseek_analysis_cache.json
+data/deepseek_delta_cache.json
+data/deepseek_cooldown.json
+data/analysis_jobs/
+__pycache__/
+*.pyc

@@ -1,12 +1,12 @@
 # 股票观察面板（v1.1 AI分析版）
 
 ## 独立程序入口（已拆分）
-- `releases/v1.0-local-base/`：V1.0 本地基础版（不含 AI 分析）
-- `releases/v1.1-ai-analysis/`：V1.1 AI分析版（含 DeepSeek 快筛/深析/触发）
+- `本地基础版/`：V1.0 本地基础版（不含 AI 分析）
+- `AI分析版/`：V1.1 AI分析版（含 DeepSeek 快筛/深析/触发）
 
 请直接进入对应目录查看和使用各自 `README.md`：
-- `releases/v1.0-local-base/README.md`
-- `releases/v1.1-ai-analysis/README.md`
+- `本地基础版/README.md`
+- `AI分析版/README.md`
 
 一个面向个人投资者的本地量化看板：
 - `基本面`（慢引擎）：SQLite + AkShare
