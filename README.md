@@ -1,6 +1,6 @@
-# Quant-AI（交易模块专仓）
+# Quant_Ai（交易模块专仓）
 
-`Quant-AI` 现在定位为交易指标分析模块专仓（快引擎 + DeepSeek 分析）。
+`Quant_Ai` 现在定位为交易指标分析模块专仓（快引擎 + DeepSeek 分析）。
 
 ## 功能
 - 基本面（慢引擎）：SQLite + AkShare
@@ -20,8 +20,8 @@
 ## 3分钟安装
 ### 1. 下载
 ```bash
-git clone https://github.com/hyfg1024-dot/Quant-AI.git
-cd Quant-AI
+git clone https://github.com/hyfg1024-dot/Quant_Ai.git
+cd Quant_Ai
 ```
 
 ### 2. 安装依赖
