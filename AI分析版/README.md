@@ -31,6 +31,3 @@ python3 -m streamlit run app.py
 ```bash
 ./create_desktop_launcher.command
 ```
-
-## 说明
-- 若你只需要本地基础功能（不使用 AI），请使用 `../本地基础版`。
