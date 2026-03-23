@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import math
 import os
@@ -27,7 +28,9 @@ from slow_engine import (
 )
 
 st.set_page_config(page_title="Quant Dashboard", page_icon="📊", layout="wide")
-APP_VERSION = "QDB-20260320-15"
+APP_VERSION = "QDB-20260322-01"
+LOCAL_PREFS_PATH = "data/local_user_prefs.json"
+ANALYSIS_CACHE_PATH = "data/deepseek_analysis_cache.json"
 DEEPSEEK_SYSTEM_PROMPT = """你是一个专业的股票分析师。必须严格按照【五维分析框架】分析：
 
 【五维分析框架】
@@ -54,6 +57,49 @@ DEEPSEEK_SYSTEM_PROMPT = """你是一个专业的股票分析师。必须严格�
 五、数据潜力挖掘说明
 
 要求：简洁、数据驱动、每部分控制在200字以内"""
+
+
+def _load_local_prefs() -> dict:
+    try:
+        if not os.path.exists(LOCAL_PREFS_PATH):
+            return {}
+        with open(LOCAL_PREFS_PATH, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_local_prefs(username: str, api_key: str) -> None:
+    os.makedirs(os.path.dirname(LOCAL_PREFS_PATH), exist_ok=True)
+    payload = {
+        "deepseek_user": (username or "").strip(),
+        "deepseek_api_key": (api_key or "").strip(),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with open(LOCAL_PREFS_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _load_analysis_cache() -> dict:
+    try:
+        if not os.path.exists(ANALYSIS_CACHE_PATH):
+            return {}
+        with open(ANALYSIS_CACHE_PATH, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_analysis_cache(cache_obj: dict) -> None:
+    os.makedirs(os.path.dirname(ANALYSIS_CACHE_PATH), exist_ok=True)
+    # 控制缓存大小，避免无限增长
+    items = list(cache_obj.items())
+    if len(items) > 120:
+        items = items[-120:]
+    with open(ANALYSIS_CACHE_PATH, "w", encoding="utf-8") as f:
+        json.dump(dict(items), f, ensure_ascii=False, indent=2)
 
 st.markdown(
     """
@@ -382,7 +428,6 @@ st.markdown(
 )
 
 st.title("股票观察面板")
-st.caption(f"版本号: {APP_VERSION}")
 
 init_db()
 
@@ -408,44 +453,44 @@ if add_holding or add_watch:
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("DeepSeek API")
+if "_prefs_loaded" not in st.session_state:
+    _prefs = _load_local_prefs()
+    if "deepseek_user_input" not in st.session_state:
+        st.session_state["deepseek_user_input"] = _prefs.get("deepseek_user", "")
+    if "deepseek_api_key_input" not in st.session_state:
+        st.session_state["deepseek_api_key_input"] = _prefs.get("deepseek_api_key", "")
+    st.session_state["_last_saved_prefs"] = {
+        "deepseek_user": st.session_state.get("deepseek_user_input", ""),
+        "deepseek_api_key": st.session_state.get("deepseek_api_key_input", ""),
+    }
+    st.session_state["_prefs_loaded"] = True
+
 analysis_user_input = st.sidebar.text_input(
     "用户名（用于区分不同使用者）",
-    value="",
+    value=st.session_state.get("deepseek_user_input", ""),
     key="deepseek_user_input",
 )
 analysis_api_key_input = st.sidebar.text_input(
     "API Key（可留空，读取环境变量）",
-    value="",
+    value=st.session_state.get("deepseek_api_key_input", ""),
     type="password",
     key="deepseek_api_key_input",
 )
 
-if st.button("刷新慢引擎数据"):
-    with st.spinner("正在更新慢引擎数据..."):
-        update_fundamental_data()
-    st.success("慢引擎数据更新完成")
+_curr_user = (analysis_user_input or "").strip()
+_curr_key = (analysis_api_key_input or "").strip()
+_last = st.session_state.get("_last_saved_prefs", {})
+if _curr_user != _last.get("deepseek_user", "") or _curr_key != _last.get("deepseek_api_key", ""):
+    _save_local_prefs(_curr_user, _curr_key)
+    st.session_state["_last_saved_prefs"] = {
+        "deepseek_user": _curr_user,
+        "deepseek_api_key": _curr_key,
+    }
 
 rows = get_latest_fundamental_snapshot()
 if not rows:
-    st.info("数据库暂无数据，请先点击“刷新慢引擎数据”。")
+    st.info("数据库暂无慢引擎快照，请先在左侧添加股票。")
     st.stop()
-
-snapshot_df = pd.DataFrame(rows)
-snapshot_df = snapshot_df[
-    [
-        "code",
-        "name",
-        "trade_date",
-        "pe_dynamic",
-        "pe_static",
-        "pe_rolling",
-        "pb",
-        "dividend_yield",
-        "boll_index",
-        "created_at",
-    ]
-]
-snapshot_df.columns = ["代码", "名称", "日期", "PE(动)", "PE(静)", "PE(滚)", "PB", "股息率", "布林指数", "更新时间"]
 
 def _format_display_time(v):
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -666,37 +711,18 @@ def _is_market_open(code: str) -> bool:
     # A股常规交易时段
     return (time(9, 30) <= t <= time(11, 30)) or (time(13, 0) <= t <= time(15, 0))
 
-
-snapshot_df["更新时间"] = snapshot_df["更新时间"].apply(_format_display_time)
-snapshot_df = snapshot_df.where(pd.notna(snapshot_df), pd.NA)
-
-st.markdown('<div class="section-title">基本面</div>', unsafe_allow_html=True)
-
-styled = snapshot_df.style.format(
-    {"PE(动)": "{:.2f}", "PE(静)": "{:.2f}", "PE(滚)": "{:.2f}", "PB": "{:.2f}", "股息率": "{:.2f}", "布林指数": "{:.2f}"},
-    na_rep="N/A",
-)
-st.dataframe(styled, width="stretch", hide_index=True)
-
 if "fast_selected_code" not in st.session_state:
     st.session_state["fast_selected_code"] = rows[0]["code"]
     st.session_state["fast_selected_name"] = rows[0]["name"]
-if "analysis_result_text" not in st.session_state:
-    st.session_state["analysis_result_text"] = ""
-if "analysis_result_title" not in st.session_state:
-    st.session_state["analysis_result_title"] = ""
-if "analysis_result_time" not in st.session_state:
-    st.session_state["analysis_result_time"] = ""
-if "analysis_show_dialog" not in st.session_state:
-    st.session_state["analysis_show_dialog"] = False
-if "analysis_result_stats" not in st.session_state:
-    st.session_state["analysis_result_stats"] = {}
+if "analysis_inline_by_stock" not in st.session_state:
+    st.session_state["analysis_inline_by_stock"] = {}
+if "_analysis_cache_loaded" not in st.session_state:
+    st.session_state["analysis_payload_cache"] = _load_analysis_cache()
+    st.session_state["_analysis_cache_loaded"] = True
 
 selected_code_for_ctrl = st.session_state["fast_selected_code"]
 market_open_for_ctrl = _is_market_open(selected_code_for_ctrl)
 
-st.markdown('<div class="engine-divider"></div>', unsafe_allow_html=True)
-st.markdown('<div class="section-title">交易面</div>', unsafe_allow_html=True)
 header_cols = st.columns([2.4, 0.8, 0.6, 0.9], vertical_alignment="bottom")
 auto_refresh_on = header_cols[1].checkbox("自动刷新", value=False, key="fast_auto_refresh_on")
 auto_refresh_sec = header_cols[2].selectbox(
@@ -1261,54 +1287,110 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
             )
             if st.button("DeepSeek分析", key=f"deepseek_analyze_{selected_code}", use_container_width=True):
                 progress = st.progress(0, text="准备快照...")
+                snapshot_hash = hashlib.sha256(analysis_json.encode("utf-8")).hexdigest()
+                cache_store = st.session_state.get("analysis_payload_cache", {})
+                cache_item = cache_store.get(snapshot_hash)
                 try:
-                    progress.progress(45, text="调用 DeepSeek 分析中...")
-                    with st.spinner("正在分析，请稍候..."):
-                        result, usage_stats, est_cost, elapsed = _call_deepseek_analysis(json_text=analysis_json)
+                    if cache_item and isinstance(cache_item, dict):
+                        progress.progress(100, text="快照未变化，复用上次分析")
+                        result = str(cache_item.get("result", "") or "")
+                        usage_stats = cache_item.get("usage", {}) or {}
+                        est_cost = 0.0
+                        elapsed = 0.0
+                        from_cache = True
+                    else:
+                        progress.progress(45, text="调用 DeepSeek 分析中...")
+                        with st.spinner("正在分析，请稍候..."):
+                            result, usage_stats, est_cost, elapsed = _call_deepseek_analysis(json_text=analysis_json)
+                        cache_store[snapshot_hash] = {
+                            "result": result,
+                            "usage": usage_stats,
+                            "saved_at": datetime.now().strftime("%m-%d %H:%M:%S"),
+                            "stock_code": selected_code,
+                            "stock_name": selected_name,
+                        }
+                        st.session_state["analysis_payload_cache"] = cache_store
+                        _save_analysis_cache(cache_store)
+                        from_cache = False
                     progress.progress(100, text="分析完成")
-                    st.session_state["analysis_result_text"] = result
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_result_stats"] = {
-                        "usage": usage_stats,
-                        "cost": est_cost,
-                        "elapsed": elapsed,
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": result,
+                        "stats": {
+                            "usage": usage_stats,
+                            "cost": est_cost,
+                            "elapsed": elapsed,
+                        },
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": from_cache,
                     }
-                    st.session_state["analysis_show_dialog"] = True
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
                     progress.empty()
                 except AuthenticationError:
                     progress.empty()
-                    st.session_state["analysis_result_text"] = "DeepSeek 认证失败：API Key 无效或已过期。"
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_show_dialog"] = True
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": "DeepSeek 认证失败：API Key 无效或已过期。",
+                        "stats": {},
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": False,
+                    }
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
                 except RateLimitError:
                     progress.empty()
-                    st.session_state["analysis_result_text"] = "DeepSeek 限流：请求过快，请稍后重试。"
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_show_dialog"] = True
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": "DeepSeek 限流：请求过快，请稍后重试。",
+                        "stats": {},
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": False,
+                    }
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
                 except APIConnectionError as exc:
                     progress.empty()
-                    st.session_state["analysis_result_text"] = f"DeepSeek 连接失败：{type(exc).__name__}\n请检查网络/VPN，稍后重试。"
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_show_dialog"] = True
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": f"DeepSeek 连接失败：{type(exc).__name__}\n请检查网络/VPN，稍后重试。",
+                        "stats": {},
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": False,
+                    }
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
                 except APIStatusError as exc:
                     progress.empty()
-                    st.session_state["analysis_result_text"] = (
-                        f"DeepSeek 服务返回异常状态：HTTP {getattr(exc, 'status_code', 'N/A')}\n"
-                        f"{exc}"
-                    )
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_show_dialog"] = True
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": (
+                            f"DeepSeek 服务返回异常状态：HTTP {getattr(exc, 'status_code', 'N/A')}\n"
+                            f"{exc}"
+                        ),
+                        "stats": {},
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": False,
+                    }
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
                 except Exception as exc:
                     progress.empty()
-                    st.session_state["analysis_result_text"] = f"DeepSeek 分析失败: {type(exc).__name__}: {exc}"
-                    st.session_state["analysis_result_title"] = f"{selected_name} ({selected_code})"
-                    st.session_state["analysis_result_time"] = datetime.now().strftime("%m-%d %H:%M:%S")
-                    st.session_state["analysis_show_dialog"] = True
+                    analysis_map = st.session_state.get("analysis_inline_by_stock", {})
+                    analysis_map[str(selected_code)] = {
+                        "title": f"{selected_name} ({selected_code})",
+                        "time": datetime.now().strftime("%m-%d %H:%M:%S"),
+                        "text": f"DeepSeek 分析失败: {type(exc).__name__}: {exc}",
+                        "stats": {},
+                        "snapshot_hash": snapshot_hash,
+                        "from_cache": False,
+                    }
+                    st.session_state["analysis_inline_by_stock"] = analysis_map
 
     for i in range(0, len(cards), 4):
         cols = st.columns(4)
@@ -1390,6 +1472,62 @@ def _render_fast_panel(selected_code: str, selected_name: str, panel=None):
 
     st.caption(panel.get("depth_note", ""))
 
+    analysis_item = (st.session_state.get("analysis_inline_by_stock", {}) or {}).get(str(selected_code))
+    if analysis_item and str(analysis_item.get("text", "")).strip():
+        analysis_text = str(analysis_item.get("text", ""))
+        analysis_title = str(analysis_item.get("title", f"{selected_name} ({selected_code})"))
+        analysis_time = str(analysis_item.get("time", ""))
+        analysis_stats = analysis_item.get("stats", {}) or {}
+        usage = analysis_stats.get("usage", {}) or {}
+        elapsed = analysis_stats.get("elapsed")
+        cost = analysis_stats.get("cost")
+        from_cache = bool(analysis_item.get("from_cache", False))
+
+        st.markdown('<div class="subsection-divider"></div>', unsafe_allow_html=True)
+        st.markdown("### DeepSeek 分析")
+        st.caption(f"{analysis_title} · {analysis_time}")
+        if from_cache:
+            st.caption("本次为同快照复用结果（未调用 API）。")
+        if elapsed is not None and cost is not None:
+            st.caption(
+                f"耗时: {elapsed:.2f}s | 输入: {usage.get('prompt_tokens', 0)} | 输出: {usage.get('completion_tokens', 0)} | "
+                f"缓存命中: {usage.get('prompt_cache_hit_tokens', 0)} | 预估成本: {cost:.4f} 元"
+            )
+
+        st.text_area(
+            "分析文档",
+            value=analysis_text,
+            height=320,
+            key=f"analysis_inline_{selected_code}_{analysis_item.get('snapshot_hash', '')[:12]}",
+            label_visibility="collapsed",
+        )
+        analysis_doc_b64 = base64.b64encode(analysis_text.encode("utf-8")).decode("ascii")
+        html(
+            f"""
+            <div style="margin-top:0.2rem;">
+              <button id="copy-analysis-doc-{selected_code}"
+                style="height:38px;padding:0 0.9rem;border-radius:8px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:0.95rem;font-weight:700;cursor:pointer;">
+                复制分析文档
+              </button>
+              <span id="copy-analysis-msg-{selected_code}" style="margin-left:0.55rem;color:#2e4b6e;font-size:0.86rem;"></span>
+            </div>
+            <script>
+              const b = document.getElementById("copy-analysis-doc-{selected_code}");
+              const m = document.getElementById("copy-analysis-msg-{selected_code}");
+              const t = decodeURIComponent(escape(window.atob("{analysis_doc_b64}")));
+              b.onclick = async function () {{
+                try {{
+                  await navigator.clipboard.writeText(t);
+                  m.textContent = "已复制";
+                }} catch (e) {{
+                  m.textContent = "复制失败";
+                }}
+              }};
+            </script>
+            """,
+            height=64,
+        )
+
 def _render_fast_panel_fragment():
     selected_code = st.session_state.get("fast_selected_code", rows[0]["code"])
     selected_name = st.session_state.get("fast_selected_name", rows[0]["name"])
@@ -1417,70 +1555,3 @@ if auto_refresh_on and market_open_for_ctrl:
     _auto_fast_panel_fragment()
 else:
     _render_fast_panel_fragment()
-
-if st.session_state.get("analysis_show_dialog") and st.session_state.get("analysis_result_text"):
-    analysis_text = st.session_state.get("analysis_result_text", "")
-    analysis_title = st.session_state.get("analysis_result_title", "分析结果")
-    analysis_time = st.session_state.get("analysis_result_time", "")
-    analysis_stats = st.session_state.get("analysis_result_stats", {}) or {}
-    usage = analysis_stats.get("usage", {}) or {}
-    elapsed = analysis_stats.get("elapsed")
-    cost = analysis_stats.get("cost")
-
-    if hasattr(st, "dialog"):
-        @st.dialog("DeepSeek 分析结果", width="large")
-        def _show_analysis_dialog():
-            st.markdown(f"### {analysis_title}")
-            st.caption(f"完成时间: {analysis_time}")
-            st.caption(
-                f"耗时: {elapsed:.2f}s | 输入: {usage.get('prompt_tokens', 0)} | 输出: {usage.get('completion_tokens', 0)} | "
-                f"缓存命中: {usage.get('prompt_cache_hit_tokens', 0)} | 预估成本: {cost:.4f} 元"
-                if elapsed is not None and cost is not None
-                else ""
-            )
-            st.text_area(
-                "分析文档",
-                value=analysis_text,
-                height=420,
-                key=f"analysis_doc_{analysis_time}",
-                label_visibility="collapsed",
-            )
-            js_doc = json.dumps(analysis_text, ensure_ascii=False)
-            html(
-                f"""
-                <div style="margin-top:0.4rem;">
-                  <button id="copy-analysis-doc"
-                    style="height:38px;padding:0 0.9rem;border-radius:8px;border:1px solid #a8c2e8;background:#dbeafe;color:#0f2a52;font-size:0.95rem;font-weight:700;cursor:pointer;">
-                    复制分析文档
-                  </button>
-                  <span id="copy-analysis-msg" style="margin-left:0.55rem;color:#2e4b6e;font-size:0.86rem;"></span>
-                </div>
-                <script>
-                  const b = document.getElementById("copy-analysis-doc");
-                  const m = document.getElementById("copy-analysis-msg");
-                  const t = {js_doc};
-                  b.onclick = async function () {{
-                    try {{
-                      await navigator.clipboard.writeText(t);
-                      m.textContent = "已复制";
-                    }} catch (e) {{
-                      m.textContent = "复制失败";
-                    }}
-                  }};
-                </script>
-                """,
-                height=64,
-            )
-
-        _show_analysis_dialog()
-        st.session_state["analysis_show_dialog"] = False
-    else:
-        st.markdown("---")
-        st.subheader("DeepSeek 分析结果")
-        st.caption(f"{analysis_title} · {analysis_time}")
-        if elapsed is not None and cost is not None:
-            st.caption(
-                f"耗时: {elapsed:.2f}s | 输入: {usage.get('prompt_tokens', 0)} | 输出: {usage.get('completion_tokens', 0)} | "
-                f"缓存命中: {usage.get('prompt_cache_hit_tokens', 0)} | 预估成本: {cost:.4f} 元"
-            )
-        st.text_area("分析文档", value=analysis_text, height=360, key=f"analysis_fallback_{analysis_time}")

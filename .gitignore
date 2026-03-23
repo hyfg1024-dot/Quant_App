@@ -1,5 +1,7 @@
 .DS_Store
 venv/
 data/*.db
+data/local_user_prefs.json
+data/deepseek_analysis_cache.json
 __pycache__/
 *.pyc
